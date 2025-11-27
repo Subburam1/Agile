@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Processing - BlurD AI</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #3498db;
+            --accent-color: #e74c3c;
+            --success-color: #27ae60;
+            --warning-color: #f39c12;
+            --bg-light: #ecf0f1;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, var(--bg-light) 0%, #d5dbdb 100%);
+            min-height: 100vh;
+        }
+
+        .navbar {
+            background: linear-gradient(135deg, var(--primary-color) 0%, #34495e 100%);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .navbar-brand {
+            font-weight: 700;
+            font-size: 1.5rem;
+        }
+
+        .card {
+            border: none;
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+        }
+
+        .upload-zone {
+            border: 3px dashed var(--secondary-color);
+            border-radius: 15px;
+            padding: 3rem;
+            text-align: center;
+            background: rgba(52, 152, 219, 0.05);
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .upload-zone:hover {
+            background: rgba(52, 152, 219, 0.1);
+            border-color: var(--accent-color);
+        }
+
+        .upload-zone.dragover {
+            background: rgba(39, 174, 96, 0.1);
+            border-color: var(--success-color);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--secondary-color) 0%, #2980b9 100%);
+            border: none;
+            border-radius: 25px;
+            padding: 12px 30px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #2980b9 0%, var(--secondary-color) 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(52, 152, 219, 0.4);
+        }
+
+        .processing {
+            display: none;
+        }
+
+        .table-container {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #dee2e6;
+            border-radius: 10px;
+        }
+
+        .metadata-card {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        }
+
+        .text-preview {
+            max-height: 300px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            border: 1px solid #dee2e6;
+        }
+
+        .format-badge {
+            font-size: 0.8rem;
+            padding: 4px 10px;
+            border-radius: 15px;
+        }
+
+        .supported-formats {
+            background: rgba(39, 174, 96, 0.1);
+            border-left: 4px solid var(--success-color);
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="fas fa-robot me-2"></i>BlurD AI
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">
+                            <i class="fas fa-camera me-1"></i>Image OCR
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/document-processing">
+                            <i class="fas fa-file-alt me-1"></i>Document Processing
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/history">
+                            <i class="fas fa-history me-1"></i>History
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card mb-4">
+                    <div class="card-header bg-primary text-white">
+                        <h4 class="mb-0">
+                            <i class="fas fa-file-alt me-2"></i>Advanced Document Processing
+                        </h4>
+                        <p class="mb-0 mt-2">Extract text, tables, and metadata from Word, PDF, and XML documents</p>
+                    </div>
+                    <div class="card-body">
+                        <!-- Supported Formats Info -->
+                        <div class="supported-formats">
+                            <h6><i class="fas fa-check-circle text-success me-2"></i>Supported Document Formats</h6>
+                            <div id="supportedFormats" class="d-flex flex-wrap gap-2 mt-2">
+                                <!-- Formats will be loaded dynamically -->
+                            </div>
+                        </div>
+
+                        <!-- Upload Area -->
+                        <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+                            <i class="fas fa-cloud-upload-alt fa-3x text-primary mb-3"></i>
+                            <h5>Drop your document here or click to browse</h5>
+                            <p class="text-muted">Supports Word (.docx), PDF (.pdf), and XML (.xml) files</p>
+                            <input type="file" id="fileInput" accept=".docx,.pdf,.xml,.html,.xhtml" style="display: none;">
+                        </div>
+
+                        <!-- Processing Options -->
+                        <div class="row mt-4">
+                            <div class="col-md-6">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="extractTables" checked>
+                                    <label class="form-check-label" for="extractTables">
+                                        <i class="fas fa-table me-1"></i>Extract Tables
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="extractMetadata" checked>
+                                    <label class="form-check-label" for="extractMetadata">
+                                        <i class="fas fa-info-circle me-1"></i>Extract Metadata
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Process Button -->
+                        <div class="text-center mt-4">
+                            <button class="btn btn-primary btn-lg" id="processBtn" disabled>
+                                <i class="fas fa-cogs me-2"></i>Process Document
+                            </button>
+                        </div>
+
+                        <!-- Processing Indicator -->
+                        <div class="processing text-center mt-4" id="processing">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Processing...</span>
+                            </div>
+                            <p class="mt-2">Processing document...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Results Section -->
+                <div id="results" style="display: none;">
+                    <!-- Document Info Card -->
+                    <div class="card mb-4">
+                        <div class="card-header bg-info text-white">
+                            <h5 class="mb-0"><i class="fas fa-info-circle me-2"></i>Document Information</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <strong>File Format:</strong>
+                                    <span id="fileFormat" class="format-badge bg-primary text-white ms-2"></span>
+                                </div>
+                                <div class="col-md-3">
+                                    <strong>Text Length:</strong>
+                                    <span id="textLength" class="badge bg-secondary ms-2"></span>
+                                </div>
+                                <div class="col-md-3">
+                                    <strong>Word Count:</strong>
+                                    <span id="wordCount" class="badge bg-secondary ms-2"></span>
+                                </div>
+                                <div class="col-md-3">
+                                    <strong>Tables Found:</strong>
+                                    <span id="tableCount" class="badge bg-success ms-2"></span>
+                                </div>
+                            </div>
+                            <div class="row mt-3" id="pdfInfo" style="display: none;">
+                                <div class="col-md-6">
+                                    <strong>Pages:</strong>
+                                    <span id="pageCount" class="badge bg-info ms-2"></span>
+                                </div>
+                                <div class="col-md-6">
+                                    <strong>Parser Used:</strong>
+                                    <span id="parserUsed" class="badge bg-warning ms-2"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Text Content Card -->
+                    <div class="card mb-4">
+                        <div class="card-header bg-success text-white">
+                            <h5 class="mb-0">
+                                <i class="fas fa-align-left me-2"></i>Extracted Text
+                                <button class="btn btn-sm btn-light ms-2" onclick="copyText()">
+                                    <i class="fas fa-copy"></i> Copy
+                                </button>
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="text-preview" id="extractedText">
+                                <!-- Text content will be displayed here -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tables Section -->
+                    <div id="tablesSection" style="display: none;">
+                        <div class="card mb-4">
+                            <div class="card-header bg-warning text-dark">
+                                <h5 class="mb-0"><i class="fas fa-table me-2"></i>Extracted Tables</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="tablesContainer">
+                                    <!-- Tables will be displayed here -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Metadata Section -->
+                    <div id="metadataSection" style="display: none;">
+                        <div class="card mb-4 metadata-card">
+                            <div class="card-header bg-secondary text-white">
+                                <h5 class="mb-0"><i class="fas fa-tags me-2"></i>Document Metadata</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="metadataContainer">
+                                    <!-- Metadata will be displayed here -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let selectedFile = null;
+
+        // Load supported formats on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadSupportedFormats();
+        });
+
+        // Drag and drop functionality
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('fileInput');
+        const processBtn = document.getElementById('processBtn');
+
+        uploadZone.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+
+        uploadZone.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+        });
+
+        uploadZone.addEventListener('drop', function(e) {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFileSelection(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', function() {
+            if (fileInput.files.length > 0) {
+                handleFileSelection(fileInput.files[0]);
+            }
+        });
+
+        function handleFileSelection(file) {
+            selectedFile = file;
+            processBtn.disabled = false;
+            
+            // Update upload zone to show selected file
+            uploadZone.innerHTML = `
+                <i class="fas fa-file-alt fa-3x text-success mb-3"></i>
+                <h5>Selected: ${file.name}</h5>
+                <p class="text-muted">File size: ${(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+                <button class="btn btn-outline-primary btn-sm" onclick="clearSelection()">Choose Different File</button>
+            `;
+        }
+
+        function clearSelection() {
+            selectedFile = null;
+            processBtn.disabled = true;
+            fileInput.value = '';
+            
+            // Reset upload zone
+            uploadZone.innerHTML = `
+                <i class="fas fa-cloud-upload-alt fa-3x text-primary mb-3"></i>
+                <h5>Drop your document here or click to browse</h5>
+                <p class="text-muted">Supports Word (.docx), PDF (.pdf), and XML (.xml) files</p>
+            `;
+        }
+
+        // Process document
+        processBtn.addEventListener('click', function() {
+            if (!selectedFile) return;
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('extract_tables', document.getElementById('extractTables').checked);
+            formData.append('extract_metadata', document.getElementById('extractMetadata').checked);
+
+            // Show processing indicator
+            document.getElementById('processing').style.display = 'block';
+            document.getElementById('results').style.display = 'none';
+            processBtn.disabled = true;
+
+            fetch('/api/document/process', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('processing').style.display = 'none';
+                processBtn.disabled = false;
+
+                if (data.success) {
+                    displayResults(data);
+                } else {
+                    alert('Error processing document: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                document.getElementById('processing').style.display = 'none';
+                processBtn.disabled = false;
+                alert('Error: ' + error.message);
+            });
+        });
+
+        function displayResults(data) {
+            // Update document info
+            document.getElementById('fileFormat').textContent = data.file_format.toUpperCase();
+            document.getElementById('textLength').textContent = data.character_count?.toLocaleString() || 0;
+            document.getElementById('wordCount').textContent = data.word_count?.toLocaleString() || 0;
+            document.getElementById('tableCount').textContent = data.table_count || 0;
+
+            // Show PDF-specific info
+            if (data.file_format === '.pdf' && data.page_count) {
+                document.getElementById('pageCount').textContent = data.page_count;
+                document.getElementById('parserUsed').textContent = data.parser_used || 'PyMuPDF';
+                document.getElementById('pdfInfo').style.display = 'block';
+            }
+
+            // Display text content
+            document.getElementById('extractedText').textContent = data.text || 'No text content found';
+
+            // Display tables
+            if (data.tables && data.tables.length > 0) {
+                displayTables(data.tables);
+                document.getElementById('tablesSection').style.display = 'block';
+            }
+
+            // Display metadata
+            if (data.metadata) {
+                displayMetadata(data.metadata);
+                document.getElementById('metadataSection').style.display = 'block';
+            }
+
+            // Show results
+            document.getElementById('results').style.display = 'block';
+        }
+
+        function displayTables(tables) {
+            const container = document.getElementById('tablesContainer');
+            container.innerHTML = '';
+
+            tables.forEach((table, index) => {
+                const tableDiv = document.createElement('div');
+                tableDiv.className = 'mb-4';
+                
+                const tableInfo = `
+                    <h6 class="mb-3">
+                        <i class="fas fa-table text-warning me-2"></i>Table ${index + 1}
+                        <span class="badge bg-info ms-2">${table.shape[0]} rows × ${table.shape[1]} columns</span>
+                    </h6>
+                    <div class="table-container">
+                        ${table.dataframe_html || '<p>Table data not available</p>'}
+                    </div>
+                `;
+                
+                tableDiv.innerHTML = tableInfo;
+                container.appendChild(tableDiv);
+            });
+        }
+
+        function displayMetadata(metadata) {
+            const container = document.getElementById('metadataContainer');
+            container.innerHTML = '';
+
+            const metadataGrid = document.createElement('div');
+            metadataGrid.className = 'row';
+
+            for (const [key, value] of Object.entries(metadata)) {
+                if (value && value.toString().trim()) {
+                    const col = document.createElement('div');
+                    col.className = 'col-md-6 mb-2';
+                    col.innerHTML = `
+                        <strong>${formatMetadataKey(key)}:</strong>
+                        <span class="ms-2">${value}</span>
+                    `;
+                    metadataGrid.appendChild(col);
+                }
+            }
+
+            container.appendChild(metadataGrid);
+        }
+
+        function formatMetadataKey(key) {
+            return key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ');
+        }
+
+        function copyText() {
+            const textElement = document.getElementById('extractedText');
+            navigator.clipboard.writeText(textElement.textContent).then(() => {
+                // Show feedback
+                const originalContent = textElement.innerHTML;
+                textElement.innerHTML = '<i class="fas fa-check text-success"></i> Text copied to clipboard!';
+                setTimeout(() => {
+                    textElement.innerHTML = originalContent;
+                }, 2000);
+            });
+        }
+
+        function loadSupportedFormats() {
+            fetch('/api/document/supported-formats')
+                .then(response => response.json())
+                .then(data => {
+                    const container = document.getElementById('supportedFormats');
+                    container.innerHTML = '';
+                    
+                    if (data.format_details) {
+                        data.format_details.forEach(format => {
+                            const badge = document.createElement('span');
+                            badge.className = 'badge bg-success me-2';
+                            badge.innerHTML = `<i class="fas fa-file-alt me-1"></i>${format.extension} - ${format.description}`;
+                            container.appendChild(badge);
+                        });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading formats:', error);
+                });
+        }
+    </script>
+</body>
+</html>

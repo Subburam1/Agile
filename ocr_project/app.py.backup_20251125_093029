@@ -1,0 +1,2246 @@
+"""Flask web application for OCR text extraction with automatic preprocessing"""
+
+import os
+import tempfile
+from pathlib import Path
+from datetime import datetime
+from flask import Flask, request, render_template, jsonify, send_from_directory
+from werkzeug.utils import secure_filename
+import uuid
+import pytesseract
+import logging
+import atexit
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+from ocr import extract_text, preprocess_image, DocumentProcessor
+from ocr.document_processor import DocumentProcessor, get_supported_formats
+from ocr.certificate_ocr import extract_certificate_text, preprocess_certificate
+from ocr.mrz_ocr import extract_mrz_text, MRZParser, extract_raw_mrz_text
+from ocr.rag_field_suggestion import RAGFieldSuggestionEngine
+from ocr.deep_learning_ocr import extract_text_deep_learning, get_deep_learning_ocr_info
+from ocr.document_types import DocumentTypeDetector
+from document_history_db import db_manager, cleanup_db
+from PIL import Image, ImageFilter, ImageDraw
+import numpy as np
+import cv2
+import base64
+import io
+from PIL import Image, ImageFilter, ImageDraw
+import numpy as np
+import cv2
+import base64
+import io
+
+# Field detection imports
+try:
+    from field_detection_model_new import FieldDetectionModel
+    from field_extraction_pipeline_new import FieldExtractionPipeline
+    from complete_ocr_flow import complete_ocr_flow, process_document_sequential
+    FIELD_DETECTION_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Field detection not available: {e}")
+    FIELD_DETECTION_AVAILABLE = False
+
+
+# Configure Tesseract path for Windows
+if os.name == 'nt':  # Windows
+    tesseract_paths = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        r"D:\Tesseract-OCR\tesseract.exe"
+    ]
+    
+    for path in tesseract_paths:
+        if os.path.exists(path):
+            pytesseract.pytesseract.tesseract_cmd = path
+            break
+
+
+# Initialize document processor and RAG engine
+doc_processor = DocumentProcessor()
+advanced_doc_processor = DocumentProcessor()
+rag_engine = RAGFieldSuggestionEngine()
+doc_type_detector = DocumentTypeDetector()
+
+# Initialize field detection pipeline
+if FIELD_DETECTION_AVAILABLE:
+    try:
+        field_detection_model = FieldDetectionModel()
+        field_extraction_pipeline = FieldExtractionPipeline()
+        print("✅ Field detection system initialized")
+    except Exception as e:
+        print(f"⚠️ Field detection initialization failed: {e}")
+        FIELD_DETECTION_AVAILABLE = False
+        field_detection_model = None
+        field_extraction_pipeline = None
+else:
+    field_detection_model = None
+    field_extraction_pipeline = None
+
+def detect_document_type(image_path):
+    """Detect document type using comprehensive detection system."""
+    try:
+        # Quick OCR scan to detect document type
+        quick_text = extract_text(image_path, config='--psm 6')
+        
+        if not quick_text or len(quick_text.strip()) < 10:
+            # Try different PSM modes if first attempt fails
+            psm_modes = ['--psm 3', '--psm 1', '--psm 4', '--psm 8']
+            for psm in psm_modes:
+                try:
+                    quick_text = extract_text(image_path, config=psm)
+                    if quick_text and len(quick_text.strip()) >= 10:
+                        break
+                except Exception as e:
+                    print(f"PSM {psm} failed: {e}")
+                    continue
+        
+        print(f"📝 Extracted text for classification (length: {len(quick_text)}): {quick_text[:200]}...")
+        
+        # Use comprehensive document detection
+        doc_type, confidence = doc_type_detector.detect_document_type(quick_text, min_confidence=0.5)
+        print(f"🎯 Document type detected: {doc_type} (confidence: {confidence:.2f})")
+        
+        return doc_type
+            
+    except Exception as e:
+        print(f"❌ Document type detection failed: {e}")
+        return 'general'
+
+
+def deduplicate_dataframe_columns(df):
+    """Remove duplicate column names from DataFrame by renaming them."""
+    import pandas as pd
+    
+    if not isinstance(df, pd.DataFrame):
+        return df
+    
+    # Check for duplicate columns
+    if df.columns.duplicated().any():
+        logger.warning(f"Found duplicate columns in DataFrame: {df.columns[df.columns.duplicated()].tolist()}")
+        
+        # Create new column names
+        new_columns = []
+        column_counts = {}
+        
+        for col in df.columns:
+            if col in column_counts:
+                column_counts[col] += 1
+                new_col = f"{col}_{column_counts[col]}"
+            else:
+                column_counts[col] = 0
+                new_col = col
+            new_columns.append(new_col)
+        
+        # Assign new column names
+        df.columns = new_columns
+        logger.info(f"Renamed duplicate columns to: {new_columns}")
+    
+    return df
+
+
+def safe_dataframe_to_json(df, orient='records'):
+    """Safely convert DataFrame to JSON, handling duplicate columns."""
+    try:
+        # Deduplicate columns first
+        df_clean = deduplicate_dataframe_columns(df)
+        return df_clean.to_json(orient=orient)
+    except Exception as e:
+        logger.error(f"Error converting DataFrame to JSON: {e}")
+        # Fallback: create a simple representation
+        try:
+            return df_clean.to_dict(orient='list')
+        except:
+            return {"error": "Could not convert DataFrame to JSON", "shape": str(df.shape)}
+
+
+def quick_ocr_extract(image_path):
+    """Fast OCR extraction using optimized settings."""
+    try:
+        # Try Tesseract first (fastest)
+        result = extract_text(image_path, config='--psm 6')
+        if result and len(result.strip()) > 5:
+            return {
+                'text': result,
+                'method': 'Tesseract (Fast)',
+                'confidence': 0.8,
+                'processing_time': 0.5
+            }
+    except Exception as e:
+        print(f"Fast Tesseract failed: {e}")
+    
+    try:
+        # Fallback to EasyOCR with limited strategies  
+        dl_result = extract_text_deep_learning(image_path, engine='easyocr')
+        if 'error' not in dl_result and dl_result.get('text'):
+            return {
+                'text': dl_result['text'],
+                'method': f"EasyOCR ({dl_result.get('engine', 'Neural Network')})",
+                'confidence': dl_result.get('confidence', 0.7),
+                'processing_time': dl_result.get('processing_time', 10)
+            }
+    except Exception as e:
+        print(f"Fast EasyOCR failed: {e}")
+    
+    # Final fallback
+    return {
+        'text': extract_text_with_fallbacks(image_path),
+        'method': 'Traditional OCR (Fallback)',
+        'confidence': 0.6,
+        'processing_time': 2
+    }
+
+
+def extract_text_with_fallbacks(image_path):
+    """Extract text using multiple OCR strategies for better reliability."""
+    strategies = [
+        {'config': '--psm 6', 'description': 'Single uniform block'},
+        {'config': '--psm 3', 'description': 'Fully automatic page segmentation'},
+        {'config': '--psm 4', 'description': 'Single column of text'},
+        {'config': '--psm 8', 'description': 'Single word'},
+        {'config': '--psm 1', 'description': 'Automatic page segmentation with OSD'},
+        {'config': '--psm 7', 'description': 'Single text line'},
+        {'config': '--psm 13', 'description': 'Raw line, treat as single text line'}
+    ]
+    
+    best_text = ""
+    best_length = 0
+    
+    for strategy in strategies:
+        try:
+            text = extract_text(image_path, config=strategy['config'])
+            if text and len(text.strip()) > best_length:
+                best_text = text
+                best_length = len(text.strip())
+                print(f"✅ OCR strategy '{strategy['description']}' produced {len(text)} characters")
+            
+            # If we got a reasonable amount of text, use it
+            if len(text.strip()) > 50:
+                print(f"🎯 Using OCR strategy: {strategy['description']}")
+                return text
+                
+        except Exception as e:
+            print(f"⚠️ OCR strategy '{strategy['description']}' failed: {e}")
+            continue
+    
+    # Return the best result we found
+    if best_text:
+        print(f"📋 Using best OCR result with {len(best_text)} characters")
+        return best_text
+    else:
+        print("❌ All OCR strategies failed")
+        return "No text could be extracted from the image."
+
+
+app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['SECRET_KEY'] = 'your-secret-key-here'
+
+# Register cleanup function for database connection
+atexit.register(cleanup_db)
+
+# Allowed file extensions
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff', 'webp'}
+
+def allowed_file(filename):
+    """Check if file extension is allowed."""
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def create_upload_folder():
+    """Create upload folder if it doesn't exist."""
+    upload_path = Path(app.config['UPLOAD_FOLDER'])
+    upload_path.mkdir(exist_ok=True)
+
+@app.route('/')
+def index():
+    """Main page with upload interface."""
+    return render_template('index.html')
+
+@app.route('/document-processing')
+@app.route('/document_processing')
+def document_processing():
+    """Document processing page for Word, PDF, and XML files."""
+    return render_template('document_processing.html')
+
+@app.route('/field-detection')
+@app.route('/field_detection')
+def field_detection():
+    """Field detection page for advanced field extraction from documents."""
+    return render_template('field_detection.html')
+
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    """Handle file upload and OCR processing."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        if not allowed_file(file.filename):
+            return jsonify({'error': f'File type not allowed. Supported: {", ".join(ALLOWED_EXTENSIONS)}'}), 400
+        
+        # Generate unique filename
+        filename = secure_filename(file.filename)
+        unique_filename = f"{uuid.uuid4()}_{filename}"
+        
+        # Create upload folder if needed
+        create_upload_folder()
+        
+        # Save uploaded file
+        file_path = Path(app.config['UPLOAD_FOLDER']) / unique_filename
+        file.save(file_path)
+
+        # Get OCR engine preference from form
+        ocr_engine = request.form.get('ocrEngine', 'auto')
+        language = request.form.get('language', 'auto')
+        preprocessing = request.form.get('preprocessing', 'auto')
+        fast_mode = request.form.get('fastMode', 'false').lower() == 'true'
+        enable_classification = request.form.get('enableClassification', 'true').lower() == 'true'
+        enable_field_suggestion = request.form.get('enableFieldSuggestion', 'true').lower() == 'true'
+        
+        try:
+            # Detect document type
+            doc_type = detect_document_type(str(file_path))
+            
+            if doc_type == 'mrz':
+                # Process MRZ document (passport/ID)
+                # extract_mrz_text already returns parsed data, not raw text
+                mrz_data = extract_mrz_text(str(file_path))
+                
+                # Clean up uploaded file
+                file_path.unlink()
+                
+                # Check if extraction was successful
+                if 'error' in mrz_data:
+                    return jsonify({
+                        'success': False,
+                        'error': mrz_data['error'],
+                        'filename': filename,
+                        'document_type': 'mrz'
+                    })
+                
+                # Save to document history
+                extracted_text = mrz_data.get('raw_ocr_text', 'MRZ data extracted')
+                record_id = db_manager.save_document_record(
+                    filename=filename,
+                    document_type='mrz',
+                    extracted_text=extracted_text,
+                    confidence=0.95,  # MRZ typically has high confidence
+                    processing_metadata={'method_used': 'MRZ OCR (passport/ID documents)'},
+                    structured_data=mrz_data
+                )
+                
+                return jsonify({
+                    'success': True,
+                    'extracted_text': extracted_text,
+                    'filename': filename,
+                    'preprocessing_applied': True,
+                    'document_type': 'mrz',
+                    'method_used': 'MRZ OCR (passport/ID documents)',
+                    'structured_data': mrz_data,
+                    'record_id': record_id
+                })
+                
+            elif doc_type == 'certificate':
+                # Use only raw OCR for certificates (works better)
+                raw_text = extract_text(str(file_path))
+                
+                # Extract structured data from the raw text
+                from ocr.certificate_ocr import extract_certificate_structure
+                structured_data = extract_certificate_structure(raw_text)
+                
+                # Save to document history
+                record_id = db_manager.save_document_record(
+                    filename=filename,
+                    document_type='certificate',
+                    extracted_text=raw_text.strip(),
+                    confidence=0.85,  # Certificates typically have good confidence
+                    processing_metadata={'method_used': 'Raw OCR (best for certificates)'},
+                    structured_data=structured_data
+                )
+                
+                # Clean up uploaded file
+                file_path.unlink()
+                
+                return jsonify({
+                    'success': True,
+                    'extracted_text': raw_text.strip(),
+                    'filename': filename,
+                    'preprocessing_applied': False,
+                    'document_type': 'certificate',
+                    'method_used': 'Raw OCR (best for certificates)',
+                    'structured_data': structured_data,
+                    'record_id': record_id
+                })
+            else:
+                # Choose OCR method based on selection
+                print(f"🔧 Using OCR engine: {ocr_engine} (Fast mode: {fast_mode})")
+                
+                # Use fast mode if requested
+                if fast_mode:
+                    print("⚡ Using fast OCR mode for quick processing")
+                    ocr_result = quick_ocr_extract(str(file_path))
+                    raw_text = ocr_result['text']
+                    dl_confidence = ocr_result['confidence']
+                    processing_method = ocr_result['method']
+                    dl_metadata = {'processing_mode': 'fast', 'processing_time': ocr_result['processing_time']}
+                    text_blocks = []
+                    layout_analysis = {}
+                elif ocr_engine == 'deep_learning' or ocr_engine == 'auto':
+                    # Try deep learning OCR
+                    try:
+                        # Use specified engine or auto detection
+                        dl_engine = 'auto' if ocr_engine == 'auto' else 'easyocr'
+                        print(f"🧠 Attempting deep learning OCR with engine: {dl_engine}")
+                        dl_result = extract_text_deep_learning(str(file_path), engine=dl_engine)
+                        
+                        if 'error' not in dl_result and dl_result.get('text'):
+                            raw_text = dl_result['text']
+                            dl_confidence = dl_result.get('confidence', 0.0)
+                            processing_method = f"Deep Learning OCR ({dl_result.get('engine', 'Neural Network')})"
+                            dl_metadata = dl_result.get('metadata', {})
+                            text_blocks = dl_result.get('text_blocks', [])
+                            layout_analysis = dl_result.get('layout_analysis', {})
+                            print(f"✅ Deep learning OCR successful. Text length: {len(raw_text)}, Confidence: {dl_confidence:.2f}")
+                        else:
+                            # Fallback to traditional OCR if deep learning fails
+                            print(f"⚠️ Deep learning OCR failed: {dl_result.get('error', 'Unknown')}. Falling back to traditional OCR")
+                            raw_text = extract_text_with_fallbacks(str(file_path))
+                            dl_confidence = 0.7  # Default confidence for traditional OCR
+                            processing_method = "Traditional OCR (Tesseract) - Deep Learning Fallback"
+                            dl_metadata = {'fallback_reason': dl_result.get('error', 'Unknown')}
+                            text_blocks = []
+                            layout_analysis = {}
+                    except Exception as e:
+                        # Final fallback to traditional OCR
+                        print(f"❌ Deep learning OCR exception: {e}. Falling back to traditional OCR")
+                        raw_text = extract_text_with_fallbacks(str(file_path))
+                        dl_confidence = 0.7
+                        processing_method = "Traditional OCR (Tesseract) - Exception Fallback"
+                        dl_metadata = {'fallback_reason': str(e)}
+                        text_blocks = []
+                        layout_analysis = {}
+                elif ocr_engine == 'traditional':
+                    # Use traditional OCR only
+                    print("🔧 Using traditional OCR (Tesseract)")
+                    raw_text = extract_text_with_fallbacks(str(file_path))
+                    dl_confidence = 0.7
+                    processing_method = "Traditional OCR (Tesseract)"
+                    dl_metadata = {'engine_selection': 'traditional'}
+                    text_blocks = []
+                    layout_analysis = {}
+                elif ocr_engine == 'benchmark':
+                    # Compare all engines (simplified version)
+                    print("⚖️ Running OCR benchmark comparison")
+                    traditional_text = extract_text_with_fallbacks(str(file_path))
+                    try:
+                        dl_result = extract_text_deep_learning(str(file_path), engine='auto')
+                        if 'error' not in dl_result and dl_result.get('text'):
+                            # Use the better result based on confidence and text length
+                            dl_confidence_score = dl_result.get('confidence', 0)
+                            dl_text_length = len(dl_result['text'].strip())
+                            traditional_text_length = len(traditional_text.strip())
+                            
+                            # Scoring logic: prefer longer text with higher confidence
+                            dl_score = dl_confidence_score * 0.7 + (dl_text_length / max(dl_text_length, traditional_text_length, 1)) * 0.3
+                            traditional_score = 0.7 * 0.7 + (traditional_text_length / max(dl_text_length, traditional_text_length, 1)) * 0.3
+                            
+                            print(f"📊 Benchmark scores - DL: {dl_score:.3f}, Traditional: {traditional_score:.3f}")
+                            
+                            if dl_score > traditional_score and dl_confidence_score > 0.5:
+                                raw_text = dl_result['text']
+                                dl_confidence = dl_result.get('confidence', 0.0)
+                                processing_method = f"Benchmark - Deep Learning OCR ({dl_result.get('engine', 'Neural Network')})"
+                                dl_metadata = dl_result.get('metadata', {})
+                                dl_metadata['benchmark_traditional_length'] = len(traditional_text)
+                                dl_metadata['benchmark_scores'] = {'dl': dl_score, 'traditional': traditional_score}
+                                text_blocks = dl_result.get('text_blocks', [])
+                                layout_analysis = dl_result.get('layout_analysis', {})
+                            else:
+                                raw_text = traditional_text
+                                dl_confidence = 0.7
+                                processing_method = "Benchmark - Traditional OCR (Tesseract)"
+                                dl_metadata = {'benchmark_dl_confidence': dl_result.get('confidence', 0), 
+                                             'benchmark_scores': {'dl': dl_score, 'traditional': traditional_score}}
+                                text_blocks = []
+                                layout_analysis = {}
+                        else:
+                            raw_text = traditional_text
+                            dl_confidence = 0.7
+                            processing_method = "Benchmark - Traditional OCR (Tesseract) - DL Failed"
+                            dl_metadata = {'benchmark_dl_error': dl_result.get('error', 'Unknown')}
+                            text_blocks = []
+                            layout_analysis = {}
+                    except Exception as e:
+                        raw_text = traditional_text
+                        dl_confidence = 0.7
+                        processing_method = "Benchmark - Traditional OCR (Tesseract) - DL Exception"
+                        dl_metadata = {'benchmark_dl_exception': str(e)}
+                        text_blocks = []
+                        layout_analysis = {}
+                else:
+                    # Default to auto mode
+                    try:
+                        dl_result = extract_text_deep_learning(str(file_path), engine='auto')
+                        if 'error' not in dl_result and dl_result.get('text'):
+                            raw_text = dl_result['text']
+                            dl_confidence = dl_result.get('confidence', 0.0)
+                            processing_method = f"Deep Learning OCR ({dl_result.get('engine', 'Neural Network')})"
+                            dl_metadata = dl_result.get('metadata', {})
+                            text_blocks = dl_result.get('text_blocks', [])
+                            layout_analysis = dl_result.get('layout_analysis', {})
+                        else:
+                            # Fallback to traditional OCR
+                            raw_text = extract_text(str(file_path))
+                            dl_confidence = 0.7  # Default confidence for traditional OCR
+                            processing_method = "Traditional OCR (Tesseract) - Deep Learning Fallback"
+                            dl_metadata = {'fallback_reason': dl_result.get('error', 'Unknown')}
+                            text_blocks = []
+                            layout_analysis = {}
+                    except Exception as e:
+                        # Final fallback to traditional OCR
+                        raw_text = extract_text(str(file_path))
+                        dl_confidence = 0.7
+                        processing_method = "Traditional OCR (Tesseract) - Exception Fallback"
+                        dl_metadata = {'fallback_reason': str(e)}
+                        text_blocks = []
+                        layout_analysis = {}
+                
+                # Create basic processed data structure
+                processed_data = {
+                    'document_type': doc_type,
+                    'confidence': dl_confidence,
+                    'processed_at': datetime.now().isoformat(),
+                    'structured_data': {}
+                }
+                
+                # Generate enhanced RAG analysis with document classification
+                try:
+                    rag_analysis = rag_engine.analyze_document_with_classification(
+                        raw_text, 
+                        top_k=8
+                    )
+                except Exception as e:
+                    print(f"RAG processing error: {e}")
+                    rag_analysis = {
+                        "document_classifications": [],
+                        "field_suggestions": [],
+                        "analysis_summary": {
+                            "total_classifications": 0,
+                            "best_document_type": "UNKNOWN",
+                            "best_confidence": "0.000",
+                            "total_field_suggestions": 0,
+                            "high_confidence_fields": 0
+                        }
+                    }
+                
+                # Clean up uploaded file
+                file_path.unlink()
+                
+                # Get document-specific method description
+                method_map = {
+                    'invoice': 'Invoice OCR (structured data extraction)',
+                    'receipt': 'Receipt OCR (transaction data extraction)',
+                    'form': 'Form OCR (field data extraction)',
+                    'business_card': 'Business Card OCR (contact extraction)',
+                    'medical': 'Medical Document OCR (patient data)',
+                    'legal': 'Legal Document OCR (contract analysis)',
+                    'academic': 'Academic Document OCR (transcript data)',
+                    'financial': 'Financial Document OCR (account data)',
+                    'government': 'Government Document OCR (official data)',
+                    'general': 'General OCR (text extraction)'
+                }
+                
+                # Save to document history
+                record_id = db_manager.save_document_record(
+                    filename=filename,
+                    document_type=processed_data['document_type'],
+                    extracted_text=raw_text.strip(),
+                    confidence=processed_data.get('confidence', 0.0),
+                    processing_metadata={
+                        'method_used': processing_method,
+                        'processed_at': processed_data.get('processed_at'),
+                        'confidence_score': f"{processed_data.get('confidence', 0.0):.2f}",
+                        'rag_enabled': True,
+                        'suggestions_count': rag_analysis['analysis_summary']['total_field_suggestions'],
+                        'document_classification': {
+                            'best_type': rag_analysis['analysis_summary']['best_document_type'],
+                            'confidence': rag_analysis['analysis_summary']['best_confidence'],
+                            'total_classifications': rag_analysis['analysis_summary']['total_classifications'],
+                            'high_confidence_types': rag_analysis['analysis_summary'].get('high_confidence_doc_types', 0)
+                        },
+                        'deep_learning_metadata': dl_metadata,
+                        'text_blocks_count': len(text_blocks),
+                        'layout_analysis': layout_analysis
+                    },
+                    structured_data=processed_data.get('structured_data', {}),
+                    rag_suggestions=rag_analysis['field_suggestions'],
+                    document_classifications=rag_analysis['document_classifications']
+                )
+                
+                return jsonify({
+                    'success': True,
+                    'extracted_text': raw_text.strip(),
+                    'filename': filename,
+                    'preprocessing_applied': False,
+                    'document_type': processed_data['document_type'],
+                    'confidence': processed_data.get('confidence', 0.0),
+                    'method_used': processing_method,
+                    'structured_data': processed_data.get('structured_data', {}),
+                    'document_classifications': rag_analysis['document_classifications'],
+                    'rag_suggestions': rag_analysis['field_suggestions'],
+                    'deep_learning_info': {
+                        'engine': dl_metadata.get('engine', 'Traditional'),
+                        'text_blocks': len(text_blocks),
+                        'layout_structure': layout_analysis.get('structure', 'unknown'),
+                        'confidence_distribution': layout_analysis.get('confidence_distribution', {}),
+                        'regions': layout_analysis.get('regions', [])
+                    },
+                    'processing_metadata': {
+                        'processed_at': processed_data.get('processed_at'),
+                        'confidence_score': f"{processed_data.get('confidence', 0.0):.2f}",
+                        'rag_enabled': True,
+                        'suggestions_count': rag_analysis['analysis_summary']['total_field_suggestions'],
+                        'document_classification': {
+                            'best_type': rag_analysis['analysis_summary']['best_document_type'],
+                            'confidence': rag_analysis['analysis_summary']['best_confidence'],
+                            'total_classifications': rag_analysis['analysis_summary']['total_classifications'],
+                            'high_confidence_types': rag_analysis['analysis_summary'].get('high_confidence_doc_types', 0)
+                        },
+                        'deep_learning_enabled': True,
+                        'high_confidence_filtering': True
+                    },
+                    'record_id': record_id
+                })
+            
+        except Exception as e:
+            # Clean up uploaded file on error
+            if file_path.exists():
+                file_path.unlink()
+            return jsonify({'error': f'OCR processing failed: {str(e)}'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': f'Upload failed: {str(e)}'}), 500
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint."""
+    try:
+        # Test if Tesseract is working
+        from ocr.ocr import get_available_languages
+        languages = get_available_languages()
+        return jsonify({
+            'status': 'healthy',
+            'tesseract_available': True,
+            'available_languages': languages
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'tesseract_available': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/blur-and-export', methods=['POST'])
+def blur_and_export_image():
+    """Apply blur to selected fields and export the modified image."""
+    try:
+        data = request.get_json()
+        
+        if 'image_data' not in data or 'selected_fields' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Missing image_data or selected_fields'
+            })
+        
+        # Decode base64 image
+        image_data = data['image_data']
+        if image_data.startswith('data:image'):
+            image_data = image_data.split(',')[1]
+        
+        image_bytes = base64.b64decode(image_data)
+        image = Image.open(io.BytesIO(image_bytes))
+        
+        # Convert to RGB if necessary
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        
+        # Get selected fields with coordinates
+        selected_fields = data['selected_fields']
+        blur_strength = data.get('blur_strength', 12)
+        
+        # Apply blur to selected field regions
+        blurred_image = apply_field_blur(image, selected_fields, blur_strength)
+        
+        # Convert back to base64
+        buffer = io.BytesIO()
+        blurred_image.save(buffer, format='PNG', optimize=True, quality=95)
+        buffer.seek(0)
+        
+        blurred_data = base64.b64encode(buffer.getvalue()).decode()
+        
+        return jsonify({
+            'success': True,
+            'blurred_image': f'data:image/png;base64,{blurred_data}',
+            'message': f'Successfully blurred {len(selected_fields)} field(s)'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in blur and export: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+def apply_field_blur(image, selected_fields, blur_strength=12):
+    """Apply Gaussian blur to specific regions of the image."""
+    # Convert PIL image to OpenCV format
+    cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    height, width = cv_image.shape[:2]
+    
+    # Create a copy for blurring
+    blurred_image = cv_image.copy()
+    
+    for field in selected_fields:
+        try:
+            # Convert percentage coordinates to pixel coordinates
+            x = int((field['x'] / 100) * width)
+            y = int((field['y'] / 100) * height)
+            w = int((field['width'] / 100) * width)
+            h = int((field['height'] / 100) * height)
+            
+            # Ensure coordinates are within image bounds
+            x = max(0, min(x, width - 1))
+            y = max(0, min(y, height - 1))
+            w = max(1, min(w, width - x))
+            h = max(1, min(h, height - y))
+            
+            # Extract the region
+            region = cv_image[y:y+h, x:x+w]
+            
+            # Apply Gaussian blur
+            blurred_region = cv2.GaussianBlur(region, (blur_strength*2+1, blur_strength*2+1), 0)
+            
+            # Replace the region in the blurred image
+            blurred_image[y:y+h, x:x+w] = blurred_region
+            
+        except Exception as e:
+            logger.warning(f"Failed to blur field region: {e}")
+            continue
+    
+    # Convert back to PIL format
+    blurred_pil = Image.fromarray(cv2.cvtColor(blurred_image, cv2.COLOR_BGR2RGB))
+    return blurred_pil
+
+@app.route('/rag/suggest', methods=['POST'])
+def rag_suggest_fields():
+    """API endpoint for RAG field suggestions."""
+    try:
+        data = request.get_json()
+        if not data or 'text' not in data:
+            return jsonify({'error': 'Text parameter is required'}), 400
+        
+        text = data['text']
+        document_type = data.get('document_type')
+        top_k = data.get('top_k', 8)
+        
+        # Generate suggestions
+        suggestions = rag_engine.suggest_fields(text, document_type, top_k)
+        summary = rag_engine.get_field_suggestions_summary(suggestions)
+        
+        return jsonify({
+            'success': True,
+            'suggestions': summary,
+            'metadata': {
+                'text_length': len(text),
+                'document_type': document_type,
+                'top_k': top_k
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'RAG suggestion failed: {str(e)}'}), 500
+
+@app.route('/rag/knowledge-base')
+def rag_knowledge_base():
+    """Get information about RAG knowledge base."""
+    try:
+        patterns = rag_engine.knowledge_base.field_patterns
+        
+        # Group patterns by document type
+        doc_types = {}
+        for pattern in patterns:
+            if pattern.document_type not in doc_types:
+                doc_types[pattern.document_type] = []
+            doc_types[pattern.document_type].append({
+                'field_name': pattern.field_name,
+                'field_type': pattern.field_type,
+                'description': pattern.description,
+                'keywords': pattern.keywords[:5],  # Limit for display
+                'examples': pattern.examples[:3]   # Limit for display
+            })
+        
+        return jsonify({
+            'total_patterns': len(patterns),
+            'document_types': list(doc_types.keys()),
+            'patterns_by_type': doc_types
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Knowledge base access failed: {str(e)}'}), 500
+
+# Deep Learning OCR API Endpoints
+
+@app.route('/api/deep-learning-ocr/info')
+def deep_learning_ocr_info():
+    """Get information about available deep learning OCR engines."""
+    try:
+        info = get_deep_learning_ocr_info()
+        return jsonify({
+            'success': True,
+            'info': info
+        })
+    except Exception as e:
+        return jsonify({'error': f'Failed to get deep learning OCR info: {str(e)}'}), 500
+
+@app.route('/api/deep-learning-ocr/process', methods=['POST'])
+def process_with_deep_learning_ocr():
+    """Process uploaded file with specific deep learning OCR engine."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        if not allowed_file(file.filename):
+            return jsonify({'error': f'File type not allowed. Supported: {", ".join(ALLOWED_EXTENSIONS)}'}), 400
+        
+        # Get engine preference from form data
+        engine = request.form.get('engine', 'auto')
+        confidence_threshold = float(request.form.get('confidence_threshold', 0.6))
+        
+        # Generate unique filename
+        filename = secure_filename(file.filename)
+        unique_filename = f"{uuid.uuid4()}_{filename}"
+        
+        # Create upload folder if needed
+        create_upload_folder()
+        
+        # Save uploaded file
+        file_path = Path(app.config['UPLOAD_FOLDER']) / unique_filename
+        file.save(file_path)
+        
+        try:
+            # Process with deep learning OCR
+            result = extract_text_deep_learning(
+                str(file_path),
+                engine=engine,
+                confidence_threshold=confidence_threshold
+            )
+            
+            # Clean up uploaded file
+            file_path.unlink()
+            
+            if 'error' in result:
+                return jsonify({
+                    'success': False,
+                    'error': result['error'],
+                    'filename': filename
+                })
+            
+            return jsonify({
+                'success': True,
+                'extracted_text': result.get('text', ''),
+                'confidence': result.get('confidence', 0.0),
+                'engine_used': result.get('engine', 'Unknown'),
+                'text_blocks': result.get('text_blocks', []),
+                'layout_analysis': result.get('layout_analysis', {}),
+                'processing_time': result.get('processing_time', 0),
+                'metadata': result.get('metadata', {}),
+                'filename': filename,
+                'bounding_boxes': result.get('bounding_boxes', [])
+            })
+            
+        except Exception as e:
+            # Clean up uploaded file on error
+            if file_path.exists():
+                file_path.unlink()
+            return jsonify({'error': f'Deep learning OCR processing failed: {str(e)}'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': f'Upload failed: {str(e)}'}), 500
+
+@app.route('/api/deep-learning-ocr/benchmark', methods=['POST'])
+def benchmark_deep_learning_ocr():
+    """Benchmark different deep learning OCR engines on the same image."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        if not allowed_file(file.filename):
+            return jsonify({'error': f'File type not allowed. Supported: {", ".join(ALLOWED_EXTENSIONS)}'}), 400
+        
+        # Generate unique filename
+        filename = secure_filename(file.filename)
+        unique_filename = f"{uuid.uuid4()}_{filename}"
+        
+        # Create upload folder if needed
+        create_upload_folder()
+        
+        # Save uploaded file
+        file_path = Path(app.config['UPLOAD_FOLDER']) / unique_filename
+        file.save(file_path)
+        
+        try:
+            from ocr.deep_learning_ocr import dl_ocr
+            
+            # Benchmark all available engines
+            benchmark_results = dl_ocr.benchmark_engines(str(file_path))
+            
+            # Clean up uploaded file
+            file_path.unlink()
+            
+            return jsonify({
+                'success': True,
+                'benchmark_results': benchmark_results,
+                'filename': filename,
+                'available_engines': dl_ocr.get_available_engines()
+            })
+            
+        except Exception as e:
+            # Clean up uploaded file on error
+            if file_path.exists():
+                file_path.unlink()
+            return jsonify({'error': f'Benchmarking failed: {str(e)}'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': f'Upload failed: {str(e)}'}), 500
+
+# Document History API Endpoints
+
+@app.route('/api/document-history')
+def get_document_history_legacy():
+    """Legacy endpoint for document history - redirects to /api/history."""
+    return get_document_history()
+
+@app.route('/api/history')
+def get_document_history():
+    """Get document processing history."""
+    try:
+        limit = request.args.get('limit', 50, type=int)
+        document_type = request.args.get('document_type')
+        days_back = request.args.get('days_back', 30, type=int)
+        
+        # Validate parameters
+        if limit > 100:
+            limit = 100
+        if days_back > 365:
+            days_back = 365
+            
+        records = db_manager.get_document_history(
+            limit=limit,
+            document_type=document_type,
+            days_back=days_back
+        )
+        
+        return jsonify({
+            'success': True,
+            'records': records,
+            'count': len(records),
+            'filters': {
+                'limit': limit,
+                'document_type': document_type,
+                'days_back': days_back
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Failed to retrieve document history: {str(e)}'}), 500
+
+@app.route('/api/history/<record_id>')
+def get_document_by_id(record_id):
+    """Get specific document record by ID."""
+    try:
+        record = db_manager.get_document_by_id(record_id)
+        
+        if record:
+            return jsonify({
+                'success': True,
+                'record': record
+            })
+        else:
+            return jsonify({'error': 'Document record not found'}), 404
+            
+    except Exception as e:
+        return jsonify({'error': f'Failed to retrieve document: {str(e)}'}), 500
+
+@app.route('/api/history/statistics')
+def get_history_statistics():
+    """Get document processing statistics."""
+    try:
+        stats = db_manager.get_statistics()
+        
+        return jsonify({
+            'success': True,
+            'statistics': stats
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Failed to retrieve statistics: {str(e)}'}), 500
+
+@app.route('/api/history/cleanup', methods=['POST'])
+def cleanup_old_records():
+    """Delete old document records."""
+    try:
+        data = request.get_json()
+        days_old = data.get('days_old', 90) if data else 90
+        
+        # Validate parameter
+        if days_old < 1:
+            return jsonify({'error': 'days_old must be at least 1'}), 400
+        if days_old > 3650:  # 10 years max
+            days_old = 3650
+            
+        deleted_count = db_manager.delete_old_records(days_old)
+        
+        return jsonify({
+            'success': True,
+            'deleted_count': deleted_count,
+            'days_old': days_old
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Failed to cleanup records: {str(e)}'}), 500
+
+@app.errorhandler(413)
+def too_large(e):
+    """Handle file too large error."""
+    return jsonify({'error': 'File too large. Maximum size is 16MB.'}), 413
+
+@app.route('/api/diagnostics/ocr')
+def ocr_diagnostics():
+    """Provide OCR system diagnostics and health check."""
+    try:
+        diagnostics = {
+            'tesseract_available': True,
+            'tesseract_path': None,
+            'tesseract_version': None,
+            'deep_learning_ocr': get_deep_learning_ocr_info(),
+            'supported_languages': [],
+            'test_results': {}
+        }
+        
+        # Test Tesseract availability
+        try:
+            import pytesseract
+            diagnostics['tesseract_path'] = pytesseract.pytesseract.tesseract_cmd
+            diagnostics['tesseract_version'] = str(pytesseract.get_tesseract_version())
+            diagnostics['supported_languages'] = pytesseract.get_languages()
+        except Exception as e:
+            diagnostics['tesseract_available'] = False
+            diagnostics['tesseract_error'] = str(e)
+        
+        # Test simple OCR functionality
+        try:
+            from PIL import Image, ImageDraw
+            
+            # Create a simple test image with text
+            test_image = Image.new('RGB', (200, 50), color='white')
+            draw = ImageDraw.Draw(test_image)
+            draw.text((10, 10), "TEST OCR", fill='black')
+            
+            # Save temporarily and test OCR
+            create_upload_folder()
+            test_path = Path(app.config['UPLOAD_FOLDER']) / 'test_ocr.png'
+            test_image.save(test_path)
+            
+            # Test traditional OCR
+            traditional_result = extract_text(str(test_path))
+            diagnostics['test_results']['traditional_ocr'] = {
+                'success': 'TEST' in traditional_result.upper(),
+                'result': traditional_result[:100],
+                'length': len(traditional_result)
+            }
+            
+            # Test deep learning OCR if available
+            if diagnostics['deep_learning_ocr']['easyocr_available'] or diagnostics['deep_learning_ocr']['paddleocr_available']:
+                dl_result = extract_text_deep_learning(str(test_path))
+                diagnostics['test_results']['deep_learning_ocr'] = {
+                    'success': 'error' not in dl_result,
+                    'result': dl_result.get('text', '')[:100] if 'error' not in dl_result else dl_result.get('error', ''),
+                    'confidence': dl_result.get('confidence', 0),
+                    'engine': dl_result.get('engine', 'unknown')
+                }
+            
+            # Clean up test file
+            if test_path.exists():
+                test_path.unlink()
+                
+        except Exception as e:
+            diagnostics['test_results']['error'] = str(e)
+        
+        return jsonify({
+            'success': True,
+            'diagnostics': diagnostics,
+            'recommendations': generate_ocr_recommendations(diagnostics)
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Failed to run OCR diagnostics: {str(e)}'}), 500
+
+def generate_ocr_recommendations(diagnostics):
+    """Generate recommendations based on OCR diagnostics."""
+    recommendations = []
+    
+    if not diagnostics['tesseract_available']:
+        recommendations.append({
+            'severity': 'critical',
+            'issue': 'Tesseract OCR not available',
+            'solution': 'Install Tesseract OCR and ensure it is in your system PATH'
+        })
+    
+    if not diagnostics['deep_learning_ocr']['easyocr_available'] and not diagnostics['deep_learning_ocr']['paddleocr_available']:
+        recommendations.append({
+            'severity': 'warning', 
+            'issue': 'No deep learning OCR engines available',
+            'solution': 'Install EasyOCR (pip install easyocr) or PaddleOCR (pip install paddleocr) for better accuracy'
+        })
+    
+    test_results = diagnostics.get('test_results', {})
+    if 'traditional_ocr' in test_results and not test_results['traditional_ocr']['success']:
+        recommendations.append({
+            'severity': 'error',
+            'issue': 'Traditional OCR test failed',
+            'solution': 'Check Tesseract installation and configuration'
+        })
+    
+    if 'deep_learning_ocr' in test_results and not test_results['deep_learning_ocr']['success']:
+        recommendations.append({
+            'severity': 'warning',
+            'issue': 'Deep learning OCR test failed', 
+            'solution': 'Check EasyOCR/PaddleOCR installation and dependencies'
+        })
+    
+    if len(recommendations) == 0:
+        recommendations.append({
+            'severity': 'info',
+            'issue': 'All OCR systems working correctly',
+            'solution': 'No action needed - OCR system is healthy'
+        })
+    
+    return recommendations
+
+@app.route('/api/document/process', methods=['POST'])
+def process_document():
+    """Process Word, PDF, or XML documents for text and table extraction."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file uploaded'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Check if file type is supported
+        filename = secure_filename(file.filename)
+        file_ext = Path(filename).suffix.lower()
+        supported_formats = get_supported_formats()
+        
+        if file_ext not in supported_formats:
+            return jsonify({
+                'error': f'Unsupported file format: {file_ext}',
+                'supported_formats': supported_formats
+            }), 400
+        
+        # Save uploaded file
+        file_id = str(uuid.uuid4())
+        file_path = Path(app.config['UPLOAD_FOLDER']) / f"{file_id}_{filename}"
+        file.save(file_path)
+        
+        try:
+            # Process document
+            extract_tables = request.form.get('extract_tables', 'true').lower() == 'true'
+            extract_metadata = request.form.get('extract_metadata', 'true').lower() == 'true'
+            
+            result = advanced_doc_processor.process_document(
+                str(file_path), 
+                extract_tables=extract_tables,
+                extract_metadata=extract_metadata
+            )
+            
+            if result.get('success'):
+                # Convert DataFrames to JSON serializable format
+                if 'tables' in result:
+                    for table in result['tables']:
+                        if 'dataframe' in table:
+                            try:
+                                table['dataframe_json'] = safe_dataframe_to_json(table['dataframe'], orient='records')
+                                table['dataframe_html'] = table['dataframe'].to_html(classes='table table-striped')
+                                # Keep raw dataframe for now but mark it for removal in response
+                                table['dataframe_shape'] = table['dataframe'].shape
+                                del table['dataframe']  # Remove non-serializable DataFrame
+                            except Exception as e:
+                                logger.error(f"Error processing table DataFrame: {e}")
+                                table['dataframe_error'] = str(e)
+                                table['dataframe_shape'] = getattr(table.get('dataframe'), 'shape', (0, 0))
+                                if 'dataframe' in table:
+                                    del table['dataframe']
+                
+                # Store processing history
+                history_entry = {
+                    'file_name': filename,
+                    'file_type': file_ext,
+                    'processing_type': 'document_processing',
+                    'text_length': len(result.get('text', '')),
+                    'table_count': result.get('table_count', 0),
+                    'has_metadata': 'metadata' in result,
+                    'success': True
+                }
+                
+                # Add to database
+                try:
+                    db_manager.add_document(
+                        filename=filename,
+                        file_type=file_ext,
+                        extracted_text=result.get('text', ''),
+                        confidence=1.0,  # Document processing doesn't have confidence scores
+                        processing_time=0.0,  # Add timing if needed
+                        metadata=result.get('metadata', {}),
+                        document_type='document'
+                    )
+                except Exception as db_error:
+                    print(f"Database error: {db_error}")
+                
+                return jsonify(result)
+            else:
+                return jsonify(result), 500
+                
+        finally:
+            # Clean up uploaded file
+            try:
+                file_path.unlink()
+            except Exception as e:
+                print(f"Failed to clean up file: {e}")
+        
+    except Exception as e:
+        return jsonify({'error': str(e), 'success': False}), 500
+
+@app.route('/api/document/supported-formats', methods=['GET'])
+def get_document_formats():
+    """Get list of supported document formats."""
+    try:
+        formats = get_supported_formats()
+        
+        format_info = {
+            '.docx': 'Microsoft Word Document',
+            '.pdf': 'Portable Document Format',
+            '.xml': 'XML Document',
+            '.html': 'HTML Document',
+            '.xhtml': 'XHTML Document'
+        }
+        
+        detailed_formats = []
+        for fmt in formats:
+            detailed_formats.append({
+                'extension': fmt,
+                'description': format_info.get(fmt, 'Document'),
+                'supported': True
+            })
+        
+        return jsonify({
+            'supported_formats': formats,
+            'format_details': detailed_formats,
+            'total_count': len(formats)
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/document/extract-text', methods=['POST'])
+def extract_document_text():
+    """Extract only text from a document."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file uploaded'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Save and process file
+        filename = secure_filename(file.filename)
+        file_id = str(uuid.uuid4())
+        file_path = Path(app.config['UPLOAD_FOLDER']) / f"{file_id}_{filename}"
+        file.save(file_path)
+        
+        try:
+            text = advanced_doc_processor.extract_text_only(str(file_path))
+            
+            return jsonify({
+                'success': True,
+                'text': text,
+                'filename': filename,
+                'character_count': len(text),
+                'word_count': len(text.split())
+            })
+            
+        finally:
+            # Clean up uploaded file
+            try:
+                file_path.unlink()
+            except Exception as e:
+                print(f"Failed to clean up file: {e}")
+    
+    except Exception as e:
+        return jsonify({'error': str(e), 'success': False}), 500
+
+@app.route('/api/document/extract-tables', methods=['POST'])
+def extract_document_tables():
+    """Extract only tables from a document."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file uploaded'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Save and process file
+        filename = secure_filename(file.filename)
+        file_id = str(uuid.uuid4())
+        file_path = Path(app.config['UPLOAD_FOLDER']) / f"{file_id}_{filename}"
+        file.save(file_path)
+        
+        try:
+            tables = advanced_doc_processor.extract_tables_only(str(file_path))
+            
+            # Convert tables to JSON format
+            tables_json = []
+            for i, table in enumerate(tables):
+                try:
+                    table_clean = deduplicate_dataframe_columns(table)
+                    tables_json.append({
+                        'table_index': i,
+                        'data': safe_dataframe_to_json(table_clean, orient='records'),
+                        'html': table_clean.to_html(classes='table table-striped'),
+                        'shape': table_clean.shape,
+                        'columns': list(table_clean.columns)
+                    })
+                except Exception as e:
+                    logger.error(f"Error processing table {i}: {e}")
+                    tables_json.append({
+                        'table_index': i,
+                        'error': str(e),
+                        'shape': getattr(table, 'shape', (0, 0)),
+                        'columns': list(getattr(table, 'columns', []))
+                    })
+            
+            return jsonify({
+                'success': True,
+                'tables': tables_json,
+                'table_count': len(tables),
+                'filename': filename
+            })
+            
+        finally:
+            # Clean up uploaded file
+            try:
+                file_path.unlink()
+            except Exception as e:
+                print(f"Failed to clean up file: {e}")
+    
+    except Exception as e:
+        return jsonify({'error': str(e), 'success': False}), 500
+
+# Field Detection API Endpoints
+
+@app.route('/api/fields/detect', methods=['POST'])
+def detect_fields():
+    """Detect and extract fields from OCR text using advanced field detection models."""
+    try:
+        if not FIELD_DETECTION_AVAILABLE:
+            return jsonify({
+                'error': 'Field detection not available. Please check model installation.'
+            }), 503
+        
+        data = request.get_json()
+        if not data or 'text' not in data:
+            return jsonify({'error': 'No text provided'}), 400
+        
+        text = data['text']
+        confidence_threshold = data.get('confidence_threshold', 0.5)
+        
+        if not text.strip():
+            return jsonify({'error': 'Empty text provided'}), 400
+        
+        # Extract fields using the advanced pipeline
+        analysis = field_extraction_pipeline.extract_fields_from_text(text)
+        
+        # Filter fields by confidence threshold
+        filtered_fields = [
+            field for field in analysis.extracted_fields 
+            if field.confidence >= confidence_threshold
+        ]
+        
+        # Convert to JSON-serializable format
+        fields_json = []
+        for field in filtered_fields:
+            fields_json.append({
+                'field_name': field.field_name,
+                'field_category': field.field_category,
+                'category_type': field.category_type,
+                'value': field.value,
+                'confidence': field.confidence,
+                'extraction_method': field.extraction_method,
+                'validation_status': field.validation_status,
+                'context': field.context[:100] + '...' if len(field.context) > 100 else field.context
+            })
+        
+        # Group fields by category type
+        categories = {}
+        for field in filtered_fields:
+            cat = field.category_type
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append({
+                'field_name': field.field_name,
+                'value': field.value,
+                'confidence': field.confidence,
+                'validation_status': field.validation_status
+            })
+        
+        return jsonify({
+            'success': True,
+            'document_type': analysis.document_type,
+            'document_confidence': analysis.document_confidence,
+            'total_fields_detected': len(filtered_fields),
+            'processing_time': analysis.processing_time,
+            'extraction_timestamp': analysis.extraction_timestamp,
+            'fields': fields_json,
+            'categories': categories,
+            'metadata': {
+                'text_length': len(text),
+                'confidence_threshold': confidence_threshold,
+                'validation_applied': True
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Field detection failed: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/fields/detect-from-image', methods=['POST'])
+def detect_fields_from_image():
+    """Detect fields from an uploaded image using OCR + field detection."""
+    try:
+        if not FIELD_DETECTION_AVAILABLE:
+            return jsonify({
+                'error': 'Field detection not available. Please check model installation.'
+            }), 503
+        
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Save uploaded file temporarily
+        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(file.filename))
+        file.save(temp_path)
+        
+        try:
+            # Extract text using OCR
+            extracted_text = extract_text(temp_path)
+            
+            if not extracted_text or not extracted_text.strip():
+                return jsonify({
+                    'error': 'No text could be extracted from the image'
+                }), 400
+            
+            # Extract fields from OCR text
+            analysis = field_extraction_pipeline.extract_fields_from_text(
+                extracted_text, document_image_path=temp_path
+            )
+            
+            # Get confidence threshold from request
+            confidence_threshold = float(request.form.get('confidence_threshold', 0.5))
+            
+            # Filter fields by confidence
+            filtered_fields = [
+                field for field in analysis.extracted_fields 
+                if field.confidence >= confidence_threshold
+            ]
+            
+            # Convert to JSON format
+            fields_json = []
+            for field in filtered_fields:
+                fields_json.append({
+                    'field_name': field.field_name,
+                    'field_category': field.field_category,
+                    'category_type': field.category_type,
+                    'value': field.value,
+                    'confidence': field.confidence,
+                    'extraction_method': field.extraction_method,
+                    'validation_status': field.validation_status
+                })
+            
+            return jsonify({
+                'success': True,
+                'extracted_text': extracted_text,
+                'document_type': analysis.document_type,
+                'document_confidence': analysis.document_confidence,
+                'total_fields_detected': len(filtered_fields),
+                'processing_time': analysis.processing_time,
+                'fields': fields_json,
+                'metadata': {
+                    'image_path': temp_path,
+                    'text_length': len(extracted_text),
+                    'confidence_threshold': confidence_threshold
+                }
+            })
+        
+        finally:
+            # Clean up temporary file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        
+    except Exception as e:
+        logger.error(f"Field detection from image failed: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/fields/training-status')
+def field_detection_training_status():
+    """Get status of field detection model training."""
+    try:
+        if not FIELD_DETECTION_AVAILABLE:
+            return jsonify({
+                'available': False,
+                'status': 'Field detection system not available',
+                'models': []
+            })
+        
+        # Check if models exist
+        models_dir = Path('models/field_detection')
+        models_exist = {
+            'field_classifier': (models_dir / 'field_classifier.pkl').exists(),
+            'category_classifier': (models_dir / 'category_classifier.pkl').exists(),
+            'field_categories': (models_dir / 'field_categories.json').exists()
+        }
+        
+        return jsonify({
+            'available': True,
+            'status': 'Field detection system initialized',
+            'models': models_exist,
+            'models_directory': str(models_dir),
+            'all_models_trained': all(models_exist.values())
+        })
+        
+    except Exception as e:
+        logger.error(f"Field detection status check failed: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/field-detection/info', methods=['GET'])
+def field_detection_info():
+    """Get information about the field detection model."""
+    if not FIELD_DETECTION_AVAILABLE or field_detection_model is None:
+        return jsonify({'error': 'Field detection not available'}), 503
+    
+    try:
+        model_info = field_detection_model.get_model_info()
+        return jsonify({
+            'success': True,
+            'model_info': model_info,
+            'categories': field_detection_model.field_categories
+        })
+    except Exception as e:
+        logger.error(f"Error getting field detection info: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/field-detection/train', methods=['POST'])
+def train_field_detection():
+    """Train or retrain the field detection model."""
+    if not FIELD_DETECTION_AVAILABLE or field_detection_model is None:
+        return jsonify({'error': 'Field detection not available'}), 503
+    
+    try:
+        data = request.get_json() or {}
+        model_name = data.get('model_name', 'random_forest')
+        
+        # Train the model
+        results = field_detection_model.train(model_name)
+        
+        return jsonify({
+            'success': True,
+            'training_results': results
+        })
+    
+    except Exception as e:
+        logger.error(f"Error training field detection model: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/field-detection/predict', methods=['POST'])
+def predict_field_category():
+    """Predict field category for given text."""
+    if not FIELD_DETECTION_AVAILABLE or field_detection_model is None:
+        return jsonify({'error': 'Field detection not available'}), 503
+    
+    try:
+        data = request.get_json()
+        if not data or 'text' not in data:
+            return jsonify({'error': 'Text field is required'}), 400
+        
+        text = data['text']
+        return_probabilities = data.get('return_probabilities', True)
+        
+        # Make prediction
+        prediction = field_detection_model.predict(text, return_probabilities)
+        
+        return jsonify({
+            'success': True,
+            'prediction': prediction
+        })
+    
+    except Exception as e:
+        logger.error(f"Error predicting field category: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/field-detection/extract-from-text', methods=['POST'])
+def extract_fields_from_text():
+    """Extract and categorize fields from text."""
+    if not FIELD_DETECTION_AVAILABLE or field_extraction_pipeline is None:
+        return jsonify({'error': 'Field detection not available'}), 503
+    
+    try:
+        data = request.get_json()
+        if not data or 'text' not in data:
+            return jsonify({'error': 'Text field is required'}), 400
+        
+        text = data['text']
+        
+        # Extract fields using pipeline
+        results = field_extraction_pipeline.extract_fields_from_text(text)
+        
+        return jsonify({
+            'success': True,
+            'extraction_results': results
+        })
+    
+    except Exception as e:
+        logger.error(f"Error extracting fields from text: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/field-detection/analyze-document', methods=['POST'])
+def analyze_document_structure():
+    """Analyze document structure based on detected fields."""
+    if not FIELD_DETECTION_AVAILABLE or field_extraction_pipeline is None:
+        return jsonify({'error': 'Field detection not available'}), 503
+    
+    try:
+        data = request.get_json()
+        if not data or 'text' not in data:
+            return jsonify({'error': 'Text field is required'}), 400
+        
+        text = data['text']
+        
+        # Analyze document structure
+        analysis = field_extraction_pipeline.analyze_document_structure(text)
+        
+        return jsonify({
+            'success': True,
+            'document_analysis': analysis
+        })
+    
+    except Exception as e:
+        logger.error(f"Error analyzing document structure: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/field-detection')
+def field_detection_page():
+    """Field detection page for training and testing the model."""
+    return render_template('field_detection.html')
+
+@app.route('/api/process-complete-flow', methods=['POST'])
+def process_complete_ocr_flow():
+    """Process document through complete sequential OCR flow."""
+    try:
+        if not FIELD_DETECTION_AVAILABLE:
+            return jsonify({
+                'error': 'Complete OCR flow not available. Field detection required.'
+            }), 503
+        
+        # Check for file upload
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Get optional parameters
+        blur_strength = int(request.form.get('blur_strength', 15))
+        confidence_threshold = float(request.form.get('confidence_threshold', 0.5))
+        auto_blur = request.form.get('auto_blur', 'true').lower() == 'true'
+        
+        # Parse selected fields if provided
+        selected_fields = None
+        if 'selected_fields' in request.form:
+            try:
+                selected_fields = json.loads(request.form.get('selected_fields'))
+            except json.JSONDecodeError:
+                return jsonify({'error': 'Invalid selected_fields JSON'}), 400
+        
+        # Save uploaded file
+        filename = secure_filename(file.filename)
+        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], f"temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{filename}")
+        file.save(temp_path)
+        
+        try:
+            logger.info(f"🔄 Starting complete OCR flow for: {filename}")
+            
+            # Process through complete flow
+            if auto_blur and not selected_fields:
+                # Auto-select sensitive fields for blurring
+                flow_result = process_document_sequential(
+                    image_path=temp_path,
+                    selected_fields=None,  # Will auto-select
+                    blur_strength=blur_strength,
+                    confidence_threshold=confidence_threshold
+                )
+            else:
+                # Use user-selected fields or no blurring
+                flow_result = process_document_sequential(
+                    image_path=temp_path,
+                    selected_fields=selected_fields,
+                    blur_strength=blur_strength,
+                    confidence_threshold=confidence_threshold
+                )
+            
+            # Check if flow was successful
+            if not flow_result.get('success', False):
+                error_msg = flow_result.get('error', 'Unknown error')
+                failed_step = flow_result.get('failed_step', 'Unknown step')
+                logger.error(f"❌ Complete OCR flow failed at {failed_step}: {error_msg}")
+                return jsonify({
+                    'success': False,
+                    'error': f"Processing failed at {failed_step}: {error_msg}",
+                    'flow_id': flow_result.get('flow_id'),
+                    'failed_step': failed_step
+                }), 500
+            
+            # Extract key results for response
+            final_output = flow_result.get('final_output', {})
+            processing_summary = flow_result.get('processing_summary', {})
+            
+            # Create response
+            response_data = {
+                'success': True,
+                'flow_id': flow_result['flow_id'],
+                'processing_summary': {
+                    'total_processing_time': processing_summary.get('total_processing_time', 0),
+                    'text_length': processing_summary.get('text_length', 0),
+                    'fields_detected': processing_summary.get('fields_detected', 0),
+                    'fields_blurred': processing_summary.get('fields_blurred', 0),
+                    'blur_strength_used': processing_summary.get('blur_strength_used', 0)
+                },
+                'extracted_text': final_output.get('extracted_text', ''),
+                'detected_fields': flow_result['processing_steps']['step3_field_detection'].get('detected_fields', []),
+                'selected_fields': flow_result['processing_steps']['step4_field_selection'].get('selected_fields', []),
+                'blurred_image_base64': final_output.get('blurred_image_base64', ''),
+                'output_filename': flow_result['processing_steps']['step6_image_export'].get('output_filename', ''),
+                'step_details': {
+                    'upload_validation': {
+                        'file_size': flow_result['processing_steps']['step1_upload_validation'].get('file_size', 0),
+                        'image_dimensions': flow_result['processing_steps']['step1_upload_validation'].get('image_dimensions', {})
+                    },
+                    'ocr_extraction': {
+                        'word_count': flow_result['processing_steps']['step2_ocr_extraction'].get('word_count', 0)
+                    },
+                    'field_detection': {
+                        'total_fields_found': flow_result['processing_steps']['step3_field_detection'].get('total_fields_found', 0),
+                        'fields_above_threshold': flow_result['processing_steps']['step3_field_detection'].get('fields_above_threshold', 0)
+                    },
+                    'field_selection': {
+                        'selection_method': flow_result['processing_steps']['step4_field_selection'].get('selection_method', 'unknown')
+                    },
+                    'field_blurring': {
+                        'blur_areas': flow_result['processing_steps']['step5_field_blurring'].get('blur_areas', [])
+                    }
+                }
+            }
+            
+            logger.info(f"✅ Complete OCR flow successful: {flow_result['flow_id']}")
+            logger.info(f"📊 Summary: {processing_summary.get('fields_detected', 0)} detected, {processing_summary.get('fields_blurred', 0)} blurred")
+            
+            return jsonify(response_data)
+            
+        finally:
+            # Cleanup temporary file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+    
+    except Exception as e:
+        logger.error(f"❌ Complete OCR flow endpoint error: {e}")
+        return jsonify({
+            'success': False,
+            'error': f"Processing failed: {str(e)}"
+        }), 500
+
+@app.route('/api/flow-history', methods=['GET'])
+def get_flow_history():
+    """Get processing history for complete OCR flows."""
+    try:
+        if not FIELD_DETECTION_AVAILABLE:
+            return jsonify({'error': 'Flow history not available'}), 503
+        
+        history = complete_ocr_flow.get_processing_history()
+        
+        # Limit history and remove large base64 data for list view
+        limited_history = []
+        for flow in history[-20:]:  # Last 20 flows
+            summary_flow = {
+                'flow_id': flow.get('flow_id'),
+                'timestamp': flow.get('timestamp'),
+                'success': flow.get('success'),
+                'processing_summary': flow.get('processing_summary', {})
+            }
+            if not flow.get('success'):
+                summary_flow['error'] = flow.get('error')
+                summary_flow['failed_step'] = flow.get('failed_step')
+            
+            limited_history.append(summary_flow)
+        
+        return jsonify({
+            'success': True,
+            'flow_history': limited_history,
+            'total_flows': len(history)
+        })
+    
+    except Exception as e:
+        return jsonify({'error': f'Failed to get flow history: {e}'}), 500
+
+@app.route('/api/flow-details/<flow_id>', methods=['GET'])
+def get_flow_details(flow_id):
+    """Get detailed results for a specific flow."""
+    try:
+        if not FIELD_DETECTION_AVAILABLE:
+            return jsonify({'error': 'Flow details not available'}), 503
+        
+    """Analyze document structure based on detected fields."""
+    if not FIELD_DETECTION_AVAILABLE or field_extraction_pipeline is None:
+        return jsonify({'error': 'Field detection not available'}), 503
+    
+    try:
+        data = request.get_json()
+        if not data or 'text' not in data:
+            return jsonify({'error': 'Text field is required'}), 400
+        
+        text = data['text']
+        
+        # Analyze document structure
+        analysis = field_extraction_pipeline.analyze_document_structure(text)
+        
+        return jsonify({
+            'success': True,
+            'document_analysis': analysis
+        })
+    
+    except Exception as e:
+        logger.error(f"Error analyzing document structure: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/field-detection')
+def field_detection_page():
+    """Field detection page for training and testing the model."""
+    return render_template('field_detection.html')
+
+@app.route('/api/process-complete-flow', methods=['POST'])
+def process_complete_ocr_flow():
+    """Process document through complete sequential OCR flow."""
+    try:
+        if not FIELD_DETECTION_AVAILABLE:
+            return jsonify({
+                'error': 'Complete OCR flow not available. Field detection required.'
+            }), 503
+        
+        # Check for file upload
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Get optional parameters
+        blur_strength = int(request.form.get('blur_strength', 15))
+        confidence_threshold = float(request.form.get('confidence_threshold', 0.5))
+        auto_blur = request.form.get('auto_blur', 'true').lower() == 'true'
+        
+        # Parse selected fields if provided
+        selected_fields = None
+        if 'selected_fields' in request.form:
+            try:
+                selected_fields = json.loads(request.form.get('selected_fields'))
+            except json.JSONDecodeError:
+                return jsonify({'error': 'Invalid selected_fields JSON'}), 400
+        
+        # Save uploaded file
+        filename = secure_filename(file.filename)
+        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], f"temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{filename}")
+        file.save(temp_path)
+        
+        try:
+            logger.info(f"🔄 Starting complete OCR flow for: {filename}")
+            
+            # Process through complete flow
+            if auto_blur and not selected_fields:
+                # Auto-select sensitive fields for blurring
+                flow_result = process_document_sequential(
+                    image_path=temp_path,
+                    selected_fields=None,  # Will auto-select
+                    blur_strength=blur_strength,
+                    confidence_threshold=confidence_threshold
+                )
+            else:
+                # Use user-selected fields or no blurring
+                flow_result = process_document_sequential(
+                    image_path=temp_path,
+                    selected_fields=selected_fields,
+                    blur_strength=blur_strength,
+                    confidence_threshold=confidence_threshold
+                )
+            
+            # Check if flow was successful
+            if not flow_result.get('success', False):
+                error_msg = flow_result.get('error', 'Unknown error')
+                failed_step = flow_result.get('failed_step', 'Unknown step')
+                logger.error(f"❌ Complete OCR flow failed at {failed_step}: {error_msg}")
+                return jsonify({
+                    'success': False,
+                    'error': f"Processing failed at {failed_step}: {error_msg}",
+                    'flow_id': flow_result.get('flow_id'),
+                    'failed_step': failed_step
+                }), 500
+            
+            # Extract key results for response
+            final_output = flow_result.get('final_output', {})
+            processing_summary = flow_result.get('processing_summary', {})
+            
+            # Create response
+            response_data = {
+                'success': True,
+                'flow_id': flow_result['flow_id'],
+                'processing_summary': {
+                    'total_processing_time': processing_summary.get('total_processing_time', 0),
+                    'text_length': processing_summary.get('text_length', 0),
+                    'fields_detected': processing_summary.get('fields_detected', 0),
+                    'fields_blurred': processing_summary.get('fields_blurred', 0),
+                    'blur_strength_used': processing_summary.get('blur_strength_used', 0)
+                },
+                'extracted_text': final_output.get('extracted_text', ''),
+                'detected_fields': flow_result['processing_steps']['step3_field_detection'].get('detected_fields', []),
+                'selected_fields': flow_result['processing_steps']['step4_field_selection'].get('selected_fields', []),
+                'blurred_image_base64': final_output.get('blurred_image_base64', ''),
+                'output_filename': flow_result['processing_steps']['step6_image_export'].get('output_filename', ''),
+                'step_details': {
+                    'upload_validation': {
+                        'file_size': flow_result['processing_steps']['step1_upload_validation'].get('file_size', 0),
+                        'image_dimensions': flow_result['processing_steps']['step1_upload_validation'].get('image_dimensions', {})
+                    },
+                    'ocr_extraction': {
+                        'word_count': flow_result['processing_steps']['step2_ocr_extraction'].get('word_count', 0)
+                    },
+                    'field_detection': {
+                        'total_fields_found': flow_result['processing_steps']['step3_field_detection'].get('total_fields_found', 0),
+                        'fields_above_threshold': flow_result['processing_steps']['step3_field_detection'].get('fields_above_threshold', 0)
+                    },
+                    'field_selection': {
+                        'selection_method': flow_result['processing_steps']['step4_field_selection'].get('selection_method', 'unknown')
+                    },
+                    'field_blurring': {
+                        'blur_areas': flow_result['processing_steps']['step5_field_blurring'].get('blur_areas', [])
+                    }
+                }
+            }
+            
+            logger.info(f"✅ Complete OCR flow successful: {flow_result['flow_id']}")
+            logger.info(f"📊 Summary: {processing_summary.get('fields_detected', 0)} detected, {processing_summary.get('fields_blurred', 0)} blurred")
+            
+            return jsonify(response_data)
+            
+        finally:
+            # Cleanup temporary file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+    
+    except Exception as e:
+        logger.error(f"❌ Complete OCR flow endpoint error: {e}")
+        return jsonify({
+            'success': False,
+            'error': f"Processing failed: {str(e)}"
+        }), 500
+
+@app.route('/api/flow-history', methods=['GET'])
+def get_flow_history():
+    """Get processing history for complete OCR flows."""
+    try:
+        if not FIELD_DETECTION_AVAILABLE:
+            return jsonify({'error': 'Flow history not available'}), 503
+        
+        history = complete_ocr_flow.get_processing_history()
+        
+        # Limit history and remove large base64 data for list view
+        limited_history = []
+        for flow in history[-20:]:  # Last 20 flows
+            summary_flow = {
+                'flow_id': flow.get('flow_id'),
+                'timestamp': flow.get('timestamp'),
+                'success': flow.get('success'),
+                'processing_summary': flow.get('processing_summary', {})
+            }
+            if not flow.get('success'):
+                summary_flow['error'] = flow.get('error')
+                summary_flow['failed_step'] = flow.get('failed_step')
+            
+            limited_history.append(summary_flow)
+        
+        return jsonify({
+            'success': True,
+            'flow_history': limited_history,
+            'total_flows': len(history)
+        })
+    
+    except Exception as e:
+        return jsonify({'error': f'Failed to get flow history: {e}'}), 500
+
+@app.route('/api/flow-details/<flow_id>', methods=['GET'])
+def get_flow_details(flow_id):
+    """Get detailed results for a specific flow."""
+    try:
+        if not FIELD_DETECTION_AVAILABLE:
+            return jsonify({'error': 'Flow details not available'}), 503
+        
+        flow_details = complete_ocr_flow.get_flow_status(flow_id)
+        
+        if not flow_details:
+            return jsonify({'error': 'Flow not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'flow_details': flow_details
+        })
+    
+    except Exception as e:
+        return jsonify({'error': f'Failed to get flow details: {e}'}), 500
+
+@app.route('/complete-flow')
+def complete_flow_page():
+    """Complete OCR flow page for sequential processing."""
+    return render_template('complete_flow.html')
+
+@app.route('/api/process-for-redaction', methods=['POST'])
+def process_for_redaction():
+    """
+    Process document for redaction workflow.
+    Returns: OCR text + ML-detected fields with coordinates + original image
+    Optimized single endpoint for the complete redaction flow.
+    """
+    try:
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'success': False, 'error': 'No file selected'}), 400
+        
+        if not allowed_file(file.filename):
+            return jsonify({'success': False, 'error': f'File type not allowed. Supported: {", ".join(ALLOWED_EXTENSIONS)}'}), 400
+        
+        # Generate unique filename
+        filename = secure_filename(file.filename)
+        unique_filename = f"{uuid.uuid4()}_{filename}"
+        
+        # Create upload folder if needed
+        create_upload_folder()
+        
+        # Save uploaded file
+        file_path = Path(app.config['UPLOAD_FOLDER']) / unique_filename
+        file.save(file_path)
+        
+        try:
+            # Get image dimensions for coordinate conversion
+            from PIL import Image
+            with Image.open(file_path) as img:
+                img_width, img_height = img.size
+                image_format = img.format
+            
+            # Step 1: OCR Extraction (fast mode for redaction)
+            logger.info("🔍 Step 1: OCR extraction for redaction...")
+            ocr_result = quick_ocr_extract(str(file_path))
+            extracted_text = ocr_result['text']
+            
+            if not extracted_text or not extracted_text.strip():
+                return jsonify({
+                    'success': False,
+                    'error': 'No text could be extracted from the document'
+                })
+            
+            # Step 2: Field Detection with ML
+            logger.info("🎯 Step 2: Detecting fields with ML model...")
+            
+            detected_fields = []
+            if FIELD_DETECTION_AVAILABLE and field_extraction_pipeline:
+                try:
+                    # Extract fields using the pipeline
+                    analysis = field_extraction_pipeline.extract_fields_from_text(
+                        extracted_text,
+                        document_image_path=str(file_path)
+                    )
+                    
+                    # Process detected fields and add coordinates
+                    for idx, field in enumerate(analysis.extracted_fields):
+                        field_data = {
+                            'id': f'field_{idx}',
+                            'field_name': getattr(field, 'field_name', 'unknown'),
+                            'field_value': getattr(field, 'field_value', ''),
+                            'confidence': getattr(field, 'confidence', 0),
+                            'category': getattr(field, 'category', 'other'),
+                            'is_sensitive': False,
+                            'auto_selected': False
+                        }
+                        
+                        # Try to get location from field
+                        location = getattr(field, 'location', {})
+                        
+                        if location and all(k in location for k in ['x', 'y', 'width', 'height']):
+                            # Use existing coordinates (convert to percentages)
+                            field_data['coordinates'] = {
+                                'x': (location['x'] / img_width) * 100,
+                                'y': (location['y'] / img_height) * 100,
+                                'width': (location['width'] / img_width) * 100,
+                                'height': (location['height'] / img_height) * 100
+                            }
+                        else:
+                            # Fallback: estimate location from text search
+                            field_value = field_data['field_value']
+                            if field_value and len(field_value) > 2:
+                                # Simple estimation (can be improved with OCR bounding boxes)
+                                estimated_y = (idx * 5) % 80  # Distribute vertically
+                                field_data['coordinates'] = {
+                                    'x': 10,  # 10% from left
+                                    'y': estimated_y,
+                                    'width': min(len(field_value) * 2, 80),  # Width based on text length
+                                    'height': 5  # 5% height
+                                }
+                        
+                        # Determine if field is sensitive (for auto-selection)
+                        sensitive_categories = ['personal_info', 'identification', 'financial', 'contact_info']
+                        sensitive_names = ['name', 'address', 'phone', 'email', 'aadhar', 'pan', 'passport', 
+                                          'account', 'ssn', 'tax', 'salary', 'income', 'dob', 'date_of_birth']
+                        
+                        field_name_lower = field_data['field_name'].lower()
+                        field_category_lower = field_data['category'].lower()
+                        
+                        is_sensitive = (
+                            field_category_lower in sensitive_categories or
+                            any(sens in field_name_lower for sens in sensitive_names)
+                        )
+                        
+                        field_data['is_sensitive'] = is_sensitive
+                        
+                        # Auto-select if confidence > 0.6 and sensitive
+                        if is_sensitive and field_data['confidence'] > 0.6:
+                            field_data['auto_selected'] = True
+                        
+                        detected_fields.append(field_data)
+                    
+                    logger.info(f"✅ Detected {len(detected_fields)} fields, {sum(1 for f in detected_fields if f['auto_selected'])} auto-selected")
+                
+                except Exception as e:
+                    logger.warning(f"Field detection failed: {e}, continuing with empty fields")
+                    detected_fields = []
+            
+            # Step 3: Convert image to base64 for frontend display
+            with open(file_path, 'rb') as f:
+                image_data = base64.b64encode(f.read()).decode('utf-8')
+            
+            # Clean up uploaded file
+            file_path.unlink()
+            
+            # Return complete redaction data
+            return jsonify({
+                'success': True,
+                'filename': filename,
+                'image_data': f'data:image/{image_format.lower()};base64,{image_data}',
+                'image_dimensions': {
+                    'width': img_width,
+                    'height': img_height
+                },
+                'extracted_text': extracted_text,
+                'detected_fields': detected_fields,
+                'statistics': {
+                    'total_fields': len(detected_fields),
+                    'auto_selected': sum(1 for f in detected_fields if f['auto_selected']),
+                    'sensitive_fields': sum(1 for f in detected_fields if f['is_sensitive']),
+                    'text_length': len(extracted_text),
+                    'word_count': len(extracted_text.split())
+                },
+                'processing_metadata': {
+                    'ocr_method': ocr_result.get('method', 'fast_mode'),
+                    'ocr_confidence': ocr_result.get('confidence', 0.7),
+                    'processing_time': ocr_result.get('processing_time', 0)
+                }
+            })
+        
+        except Exception as e:
+            # Clean up on error
+            if file_path.exists():
+                file_path.unlink()
+            logger.error(f"Redaction processing error: {e}")
+            return jsonify({
+                'success': False,
+                'error': f'Processing failed: {str(e)}'
+            }), 500
+    
+    except Exception as e:
+        logger.error(f"Redaction upload error: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'Upload failed: {str(e)}'
+        }), 500
+
+if __name__ == '__main__':
+    # Create upload folder on startup
+    create_upload_folder()
+    
+    print("🚀 Starting Raw OCR Web Application...")
+    print("📁 Upload folder:", Path(app.config['UPLOAD_FOLDER']).absolute())
+    print("🌐 Access the application at: http://localhost:5000")
+    print("✨ Features: Raw OCR extraction, certificate detection, drag-and-drop upload")
+    
+    # Register cleanup function
+    atexit.register(cleanup_db)
+    
+    # Production-ready configuration to fix stability issues
+    app.run(debug=False, host='0.0.0.0', port=5000, 
+           threaded=True, use_reloader=False)

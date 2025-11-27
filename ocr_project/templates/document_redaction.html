@@ -1,0 +1,1070 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Redaction - AI Powered</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --secondary: #8b5cf6;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --dark: #1e293b;
+            --light: #f8fafc;
+            --glass-bg: rgba(255, 255, 255, 0.15);
+            --glass-border: rgba(255, 255, 255, 0.3);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(-45deg, #667eea, #764ba2, #f093fb, #4facfe);
+            background-size: 400% 400%;
+            animation: gradientShift 15s ease infinite;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            color: white;
+        }
+
+        @keyframes gradientShift {
+            0% {
+                background-position: 0% 50%;
+            }
+
+            50% {
+                background-position: 100% 50%;
+            }
+
+            100% {
+                background-position: 0% 50%;
+            }
+        }
+
+        /* Header Styles */
+        .header {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 15px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+        }
+
+        .header-logo {
+            font-size: 2rem;
+            background: white;
+            width: 45px;
+            height: 45px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .header-text h1 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.4rem;
+            font-weight: 700;
+            margin: 0;
+            color: white;
+            letter-spacing: -0.5px;
+        }
+
+        .header-text p {
+            font-size: 0.8rem;
+            color: rgba(255, 255, 255, 0.8);
+            margin: 0;
+        }
+
+        .header-nav {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+
+        .nav-link {
+            color: rgba(255, 255, 255, 0.9);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.95rem;
+            padding: 8px 16px;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .nav-link:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: white;
+        }
+
+        .nav-btn {
+            background: white;
+            color: var(--primary);
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-weight: 600;
+            text-decoration: none;
+            font-size: 0.9rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s;
+        }
+
+        .nav-btn:hover {
+            transform: translateY(-2px);
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            padding: 40px 20px;
+            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .container {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 24px;
+            padding: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1), 0 0 80px rgba(99, 102, 241, 0.15);
+        }
+
+        .page-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 2.5rem;
+            font-weight: 700;
+            text-align: center;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #fff 0%, #e0e7ff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .page-subtitle {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.8);
+            margin-bottom: 40px;
+            font-size: 1.1rem;
+        }
+
+        /* Upload Area */
+        .upload-area {
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px dashed rgba(255, 255, 255, 0.4);
+            border-radius: 20px;
+            padding: 60px 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .upload-area:hover {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: rgba(255, 255, 255, 0.6);
+            transform: translateY(-4px);
+        }
+
+        .upload-icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        @keyframes float {
+
+            0%,
+            100% {
+                transform: translateY(0px);
+            }
+
+            50% {
+                transform: translateY(-10px);
+            }
+        }
+
+        .upload-area h2 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.75rem;
+            color: white;
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+
+        .upload-area p {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 1rem;
+        }
+
+        /* Alerts */
+        .alert {
+            padding: 16px 20px;
+            margin: 20px 0;
+            border-radius: 12px;
+            display: none;
+            backdrop-filter: blur(10px);
+            animation: slideDown 0.3s ease;
+            border-left: 4px solid;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .alert-success {
+            background: rgba(16, 185, 129, 0.15);
+            color: #d1fae5;
+            border-left-color: var(--success);
+        }
+
+        .alert-error {
+            background: rgba(239, 68, 68, 0.15);
+            color: #fee2e2;
+            border-left-color: var(--danger);
+        }
+
+        /* Loading */
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+            color: white;
+            font-size: 1.1rem;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 255, 255, 0.2);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Preview Section */
+        .preview {
+            display: none;
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: scale(0.95);
+            }
+
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        #docImage {
+            max-width: 100%;
+            border-radius: 16px;
+            margin: 30px 0;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        }
+
+        /* Document Type Banner */
+        .document-type-banner {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.15));
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 16px;
+            padding: 20px 28px;
+            margin: 24px 0;
+            display: none;
+            align-items: center;
+            gap: 16px;
+            backdrop-filter: blur(10px);
+        }
+
+        .doc-type-icon {
+            font-size: 2.5rem;
+        }
+
+        .doc-type-info {
+            flex: 1;
+        }
+
+        .doc-type-name {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: white;
+            margin-bottom: 4px;
+        }
+
+        .doc-type-meta {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.9rem;
+        }
+
+        .confidence-badge {
+            background: linear-gradient(135deg, var(--success), #059669);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .confidence-low {
+            background: linear-gradient(135deg, var(--warning), #d97706);
+        }
+
+        /* Fields List */
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 30px 0 20px;
+        }
+
+        .section-header h3 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.5rem;
+            color: white;
+            font-weight: 600;
+        }
+
+        .badge {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+
+        .field-item {
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-left: 4px solid var(--primary);
+            padding: 16px 20px;
+            margin: 12px 0;
+            border-radius: 12px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .field-item:hover {
+            background: rgba(255, 255, 255, 0.12);
+            transform: translateX(4px);
+        }
+
+        .field-item.sensitive {
+            border-left-color: var(--danger);
+            background: rgba(239, 68, 68, 0.08);
+        }
+
+        .field-item label {
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: white;
+            font-size: 0.95rem;
+        }
+
+        .field-item input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+            accent-color: var(--primary);
+        }
+
+        .field-name {
+            font-weight: 600;
+            color: white;
+        }
+
+        .field-value {
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .field-meta {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.85rem;
+            margin-left: auto;
+        }
+
+        .sensitive-tag {
+            background: linear-gradient(135deg, var(--danger), #dc2626);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        /* Buttons & Controls */
+        button {
+            padding: 12px 28px;
+            margin: 6px;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            font-family: 'Inter', sans-serif;
+            transition: all 0.3s ease;
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, var(--success), #059669);
+            color: white;
+            box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3);
+        }
+
+        .btn-success:hover {
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.15);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.25);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .slider-container {
+            background: rgba(255, 255, 255, 0.08);
+            padding: 24px;
+            border-radius: 16px;
+            margin: 24px 0;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+
+        .slider-label {
+            color: white;
+            font-size: 1rem;
+            font-weight: 500;
+            margin-bottom: 16px;
+            display: block;
+        }
+
+        .slider-value {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 700;
+            font-size: 1.5rem;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            height: 8px;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.15);
+            outline: none;
+        }
+
+        .control-panel {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin: 20px 0;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-top: 30px;
+        }
+
+        /* Footer Styles */
+        .footer {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 30px 40px;
+            margin-top: auto;
+        }
+
+        .footer-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        .footer-info {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 0.9rem;
+        }
+
+        .footer-info strong {
+            color: white;
+            font-weight: 600;
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 20px;
+        }
+
+        .footer-links a {
+            color: rgba(255, 255, 255, 0.7);
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: color 0.3s;
+        }
+
+        .footer-links a:hover {
+            color: white;
+        }
+
+        .footer-tech {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Header -->
+    <header class="header">
+        <a href="#" class="header-brand">
+            <div class="header-logo">🔒</div>
+            <div class="header-text">
+                <h1>SecureRedact</h1>
+                <p>Enterprise Grade Protection</p>
+            </div>
+        </a>
+        <nav class="header-nav">
+            <a href="#" class="nav-link">Dashboard</a>
+            <a href="#" class="nav-link" onclick="showHistory()">History</a>
+            <a href="#" class="nav-link">Settings</a>
+            <a href="#" class="nav-btn">My Account</a>
+        </nav>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="container">
+            <h1 class="page-title">Document Redaction System</h1>
+            <p class="page-subtitle">AI-Powered Document Classification & Sensitive Data Protection</p>
+
+            <div class="alert alert-error" id="errorAlert"></div>
+            <div class="alert alert-success" id="successAlert"></div>
+
+            <div class="upload-section" id="uploadSection">
+                <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+                    <div class="upload-icon">📄</div>
+                    <h2>Upload Document</h2>
+                    <p>Click here or drag and drop your document to start</p>
+                    <input type="file" id="fileInput" accept="image/*" style="display:none"
+                        onchange="handleUpload(event)">
+                </div>
+            </div>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <div>Processing document... Please wait</div>
+            </div>
+
+            <div class="preview" id="previewSection">
+                <img id="docImage" src="">
+
+                <div class="document-type-banner" id="docTypeBanner">
+                    <div class="doc-type-icon" id="docTypeIcon">📄</div>
+                    <div class="doc-type-info">
+                        <div class="doc-type-name" id="docTypeName">Unknown Document</div>
+                        <div class="doc-type-meta">AI-powered document classification</div>
+                    </div>
+                    <div class="confidence-badge" id="docTypeConfidence">--</div>
+                </div>
+
+                <div class="section-header">
+                    <h3>Detected Fields</h3>
+                    <span class="badge"><span id="fieldCount">0</span> Selected</span>
+                </div>
+
+                <div class="control-panel">
+                    <button class="btn-secondary" onclick="selectAll()">✓ Select All</button>
+                    <button class="btn-secondary" onclick="selectSensitive()">⚠️ Select Sensitive</button>
+                    <button class="btn-secondary" onclick="clearAll()">✗ Clear All</button>
+                </div>
+
+                <div id="fieldsList"></div>
+
+                <div class="slider-container">
+                    <label class="slider-label">
+                        Blur Strength: <span class="slider-value" id="blurValue">15</span>
+                    </label>
+                    <input type="range" id="blurSlider" min="5" max="50" value="15"
+                        oninput="document.getElementById('blurValue').textContent=this.value">
+                </div>
+
+                <div class="action-buttons">
+                    <button class="btn-success" id="downloadBtn" onclick="downloadRedacted()" disabled>
+                        💾 Download Redacted Document
+                    </button>
+                    <button class="btn-secondary" onclick="reset()">🔄 Upload New Document</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-info">
+                <strong>SecureRedact AI</strong> &copy; 2025. All rights reserved.
+            </div>
+            <div class="footer-links">
+                <a href="#">Privacy Policy</a>
+                <a href="#">Terms of Service</a>
+                <a href="#">Support</a>
+            </div>
+            <div class="footer-tech">
+                <a href="#">Privacy Policy</a>
+                <a href="#">Terms of Service</a>
+                <a href="#">Support</a>
+            </div>
+            <div class="footer-tech">
+                Powered by <span>OpenCV</span> • <span>Tesseract OCR</span> • <span>Flask</span>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        let docData = null;
+        let selectedFields = [];
+
+        async function handleUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            show('loading');
+            hide('errorAlert');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const res = await fetch('/api/process-for-redaction', { method: 'POST', body: formData });
+                const data = await res.json();
+
+                if (!data.success) {
+                    showError(data.error || 'Upload failed');
+                    hide('loading');
+                    return;
+                }
+
+                docData = data;
+                selectedFields = [];
+
+                document.getElementById('docImage').src = data.image_data;
+
+                // Display document type
+                if (data.document_type) {
+                    const docTypeIcons = {
+                        'Aadhaar Card': '🆔',
+                        'PAN Card': '💳',
+                        'Passport': '🛂',
+                        'Voter ID Card': '🗳️',
+                        'Driving License': '🚗',
+                        'Marksheet': '📊',
+                        'College ID Card': '🎓',
+                        'Bank Passbook': '🏦',
+                        'Bank Statement': '📈',
+                        'Invoice': '🧾',
+                        'Bill/Receipt': '🧾',
+                        'Salary Slip': '💰',
+                        'Unknown Document': '📄'
+                    };
+
+                    const icon = docTypeIcons[data.document_type] || '📄';
+                    const confidence = Math.round(data.document_confidence * 100);
+
+                    document.getElementById('docTypeIcon').textContent = icon;
+                    document.getElementById('docTypeName').textContent = data.document_type;
+                    document.getElementById('docTypeConfidence').textContent = confidence + '%';
+                    document.getElementById('docTypeConfidence').className =
+                        confidence >= 70 ? 'confidence-badge' : 'confidence-badge confidence-low';
+                    document.getElementById('docTypeBanner').style.display = 'flex';
+                }
+
+                document.getElementById('fieldCount').textContent = data.detected_fields.length;
+
+                const list = document.getElementById('fieldsList');
+                list.innerHTML = '';
+
+                data.detected_fields.forEach((f, i) => {
+                    const div = document.createElement('div');
+                    div.className = 'field-item' + (f.is_sensitive ? ' sensitive' : '');
+                    div.innerHTML = `
+                <label>
+                    <input type="checkbox" ${f.auto_selected ? 'checked' : ''} onchange="toggleField(${i}, this.checked)">
+                        <span class="field-name">${f.field_name}</span>
+                        <span class="field-value">: ${f.field_value}</span>
+                        <span class="field-meta">${f.category}, ${Math.round(f.confidence * 100)}%</span>
+                        ${f.is_sensitive ? '<span class="sensitive-tag">⚠️ Sensitive</span>' : ''}
+                </label>
+                `;
+                    list.appendChild(div);
+
+                    if (f.auto_selected) selectedFields.push(f);
+                });
+
+                hide('loading');
+                hide('uploadSection');
+                show('previewSection');
+                showSuccess(`✓ Detected: ${data.document_type} | Found ${data.detected_fields.length} fields`);
+                updateBtn();
+
+            } catch (err) {
+                showError('Error: ' + err.message);
+                hide('loading');
+            }
+        }
+
+        function toggleField(idx, checked) {
+            const field = docData.detected_fields[idx];
+            if (checked) {
+                if (!selectedFields.find(f => f.id === field.id)) selectedFields.push(field);
+            } else {
+                selectedFields = selectedFields.filter(f => f.id !== field.id);
+            }
+            document.getElementById('fieldCount').textContent = selectedFields.length;
+            updateBtn();
+        }
+
+        function selectAll() {
+            selectedFields = [...docData.detected_fields];
+            document.querySelectorAll('#fieldsList input').forEach(cb => cb.checked = true);
+            document.getElementById('fieldCount').textContent = selectedFields.length;
+            updateBtn();
+        }
+
+        function selectSensitive() {
+            selectedFields = docData.detected_fields.filter(f => f.is_sensitive);
+            document.querySelectorAll('#fieldsList input').forEach((cb, i) => {
+                cb.checked = docData.detected_fields[i].is_sensitive;
+            });
+            document.getElementById('fieldCount').textContent = selectedFields.length;
+            updateBtn();
+        }
+
+        function clearAll() {
+            selectedFields = [];
+            document.querySelectorAll('#fieldsList input').forEach(cb => cb.checked = false);
+            document.getElementById('fieldCount').textContent = 0;
+            updateBtn();
+        }
+
+        function updateBtn() {
+            document.getElementById('downloadBtn').disabled = selectedFields.length === 0;
+        }
+
+        async function downloadRedacted() {
+            if (selectedFields.length === 0) return;
+
+            show('loading');
+
+            try {
+                const payload = {
+                    image_data: docData.image_data,
+                    selected_fields: selectedFields.map(f => f.coordinates),
+                    blur_strength: parseInt(document.getElementById('blurSlider').value)
+                };
+
+                const res = await fetch('/api/blur-and-export', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const result = await res.json();
+
+                if (!result.success) {
+                    showError(result.error || 'Blur failed');
+                    hide('loading');
+                    return;
+                }
+
+                const link = document.createElement('a');
+                link.href = result.blurred_image;
+                link.download = `redacted_${docData.filename}`;
+                link.click();
+
+                hide('loading');
+                showSuccess('✓ Document downloaded successfully!');
+
+            } catch (err) {
+                showError('Download error: ' + err.message);
+                hide('loading');
+            }
+        }
+
+        function reset() {
+            docData = null;
+            selectedFields = [];
+            document.getElementById('fileInput').value = '';
+            hide('previewSection');
+            hide('docTypeBanner');
+            show('uploadSection');
+            hide('errorAlert');
+            hide('successAlert');
+        }
+
+        function show(id) { document.getElementById(id).style.display = 'block'; }
+        function hide(id) { document.getElementById(id).style.display = 'none'; }
+        function showError(msg) { document.getElementById('errorAlert').textContent = msg; show('errorAlert'); }
+        function showSuccess(msg) { document.getElementById('successAlert').textContent = msg; show('successAlert'); }
+
+        const uploadArea = document.querySelector('.upload-area');
+        uploadArea.ondragover = (e) => { e.preventDefault(); uploadArea.style.background = 'rgba(255, 255, 255, 0.2)'; };
+        uploadArea.ondragleave = () => { uploadArea.style.background = ''; };
+        uploadArea.ondrop = (e) => {
+            e.preventDefault();
+            uploadArea.style.background = '';
+            if (e.dataTransfer.files.length) {
+                document.getElementById('fileInput').files = e.dataTransfer.files;
+                handleUpload({ target: { files: e.dataTransfer.files } });
+            }
+        };
+
+        // History Functionality
+        async function showHistory() {
+            const modal = document.getElementById('historyModal');
+            const list = document.getElementById('historyList');
+            modal.style.display = 'flex';
+            list.innerHTML = '<div class="loading" style="display:block">Loading history...</div>';
+
+            try {
+                const res = await fetch('/api/history');
+                const data = await res.json();
+
+                if (data.success && data.history.length > 0) {
+                    list.innerHTML = data.history.map(item => `
+                        <div class="history-item">
+                            <div class="history-icon">📄</div>
+                            <div class="history-details">
+                                <div class="history-name">${item.filename}</div>
+                                <div class="history-meta">
+                                    ${item.document_type} • ${item.total_fields} fields • ${new Date(item.timestamp).toLocaleString()}
+                                </div>
+                            </div>
+                            <div class="history-status">${item.status}</div>
+                        </div>
+                    `).join('');
+                } else {
+                    list.innerHTML = '<div style="text-align:center; color:rgba(255,255,255,0.6); padding:20px">No history found</div>';
+                }
+            } catch (err) {
+                list.innerHTML = '<div style="text-align:center; color:var(--danger)">Failed to load history</div>';
+            }
+        }
+
+        function closeHistory() {
+            document.getElementById('historyModal').style.display = 'none';
+        }
+
+        // Close modal on outside click
+        window.onclick = function (event) {
+            const modal = document.getElementById('historyModal');
+            if (event.target == modal) {
+                modal.style.display = "none";
+            }
+        }
+    </script>
+
+    <!-- History Modal -->
+    <div id="historyModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Processing History</h2>
+                <span class="close-modal" onclick="closeHistory()">&times;</span>
+            </div>
+            <div id="historyList" class="history-list"></div>
+        </div>
+    </div>
+
+    <style>
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(5px);
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: rgba(30, 41, 59, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 16px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+            animation: slideUp 0.3s ease;
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(50px);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h2 {
+            margin: 0;
+            font-family: 'Outfit', sans-serif;
+            color: white;
+            font-size: 1.5rem;
+        }
+
+        .close-modal {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: color 0.3s;
+        }
+
+        .close-modal:hover {
+            color: white;
+        }
+
+        .history-list {
+            padding: 10px;
+            overflow-y: auto;
+        }
+
+        .history-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            transition: background 0.2s;
+        }
+
+        .history-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .history-icon {
+            font-size: 1.5rem;
+            background: rgba(255, 255, 255, 0.1);
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 10px;
+        }
+
+        .history-details {
+            flex: 1;
+        }
+
+        .history-name {
+            color: white;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .history-meta {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.85rem;
+        }
+
+        .history-status {
+            background: rgba(16, 185, 129, 0.2);
+            color: #6ee7b7;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+    </style>
+</body>
+
+
+</html>

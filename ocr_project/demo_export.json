@@ -1,0 +1,79 @@
+{
+  "export_metadata": {
+    "export_timestamp": "2025-11-13T11:19:04.039056",
+    "export_version": "1.0",
+    "source_system": "OCR Field Suggestion System"
+  },
+  "document_info": {
+    "filename": "aadhar.jpg",
+    "document_type": "AADHAR_CARD",
+    "processing_method": "Enhanced RAG Field Suggestion",
+    "processing_timestamp": "2025-11-13T11:19:04.039056"
+  },
+  "extraction_summary": {
+    "total_fields": 8,
+    "high_confidence_fields": 1,
+    "medium_confidence_fields": 7,
+    "low_confidence_fields": 0,
+    "average_confidence": 0.725,
+    "needs_review_count": 0
+  },
+  "extracted_fields": {
+    "aadhar_number": {
+      "value": "608898625039",
+      "confidence": 0.8999999999999999,
+      "confidence_level": "high",
+      "needs_review": false,
+      "rag_suggestion": null
+    },
+    "name": {
+      "value": "Nithiyanantham T S",
+      "confidence": 0.7,
+      "confidence_level": "medium",
+      "needs_review": false,
+      "rag_suggestion": null
+    },
+    "father_name": {
+      "value": "Thangavel Kulathur Patti",
+      "confidence": 0.6,
+      "confidence_level": "medium",
+      "needs_review": false,
+      "rag_suggestion": null
+    },
+    "address": {
+      "value": "Viswanathapuri, PO",
+      "confidence": 0.6,
+      "confidence_level": "medium",
+      "needs_review": false,
+      "rag_suggestion": null
+    },
+    "mobile": {
+      "value": "9345527291",
+      "confidence": 0.7,
+      "confidence_level": "medium",
+      "needs_review": false,
+      "rag_suggestion": null
+    },
+    "enrollment_no": {
+      "value": "0640/02143/02550",
+      "confidence": 0.7999999999999999,
+      "confidence_level": "medium",
+      "needs_review": false,
+      "rag_suggestion": null
+    },
+    "pin_code": {
+      "value": "639002",
+      "confidence": 0.7999999999999999,
+      "confidence_level": "medium",
+      "needs_review": false,
+      "rag_suggestion": null
+    },
+    "state": {
+      "value": "Tamil Nadu",
+      "confidence": 0.7,
+      "confidence_level": "medium",
+      "needs_review": false,
+      "rag_suggestion": null
+    }
+  }
+}
