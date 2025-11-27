@@ -25,30 +25,39 @@ class DBManager:
             self.client = None
             self.collection = None
 
-    def save_record(self, data):
-        """Save processing record to MongoDB history."""
+    def save_record(self, data, user_id=None):
+        """Save processing record to MongoDB history with user_id."""
         if self.collection is not None:
             try:
                 # Add timestamp if not present
                 if 'timestamp' not in data:
                     data['timestamp'] = datetime.datetime.utcnow()
                 
+                # Add user_id if provided
+                if user_id:
+                    data['user_id'] = user_id
+                
                 self.collection.insert_one(data)
-                print(f"✅ Saved to history: {data.get('filename')}")
+                print(f"✅ Saved to history: {data.get('filename')} (user: {user_id})")
                 return True
             except Exception as e:
                 print(f"❌ Failed to save history: {e}")
                 return False
         return False
 
-    def get_history(self, limit=50):
-        """Get processing history from MongoDB."""
+    def get_history(self, user_id=None, limit=50):
+        """Get processing history from MongoDB, optionally filtered by user_id."""
         if self.collection is None:
             return None
         
         try:
+            # Build query filter
+            query = {}
+            if user_id:
+                query['user_id'] = user_id
+            
             # Get last N records, sorted by timestamp desc
-            records = list(self.collection.find({}, {'_id': 0}).sort('timestamp', -1).limit(limit))
+            records = list(self.collection.find(query, {'_id': 0}).sort('timestamp', -1).limit(limit))
             return records
         except Exception as e:
             print(f"❌ Failed to fetch history: {e}")

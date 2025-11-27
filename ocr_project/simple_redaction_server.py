@@ -16,8 +16,8 @@ import datetime
 from datetime import timedelta
 from functools import wraps
 from db_utils import db_manager
-import auth_db
-from auth_db import register_user, login_user, get_user_by_id
+import auth_db_mongo
+from auth_db_mongo import register_user, login_user, get_user_by_id, update_user_email, change_password
 
 # Configure pytesseract path (update if needed)
 # pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -585,16 +585,19 @@ def detect_sensitive_fields(text, image_path=None):
 
 @app.route('/')
 @app.route('/document-redaction')
+@login_required
 def document_redaction_page():
     """Document redaction page."""
     return render_template('index.html')
 
 @app.route('/history')
+@login_required
 def history_page():
     """Processing history page."""
     return render_template('history.html')
 
 @app.route('/api/process-for-redaction', methods=['POST'])
+@login_required
 def process_for_redaction():
     """
     Process uploaded document with OCR and field detection.
@@ -650,7 +653,8 @@ def process_for_redaction():
         sensitive_count = sum(1 for f in detected_fields if f['is_sensitive'])
         auto_selected_count = sum(1 for f in detected_fields if f['auto_selected'])
         
-        # Save to history (exclude large image data)
+        # Save to history (exclude large image data) with user_id
+        user_id = session.get('user_id')
         save_to_history({
             'filename': file.filename,
             'document_type': document_info['document_type'],
@@ -659,7 +663,7 @@ def process_for_redaction():
             'sensitive_fields': sensitive_count,
             'status': 'Processed',
             'processing_time': 0  # Placeholder
-        })
+        }, user_id)
         
         # Return response with detected fields and document type
         return jsonify({
@@ -703,6 +707,7 @@ def process_for_redaction():
 
 
 @app.route('/api/blur-and-export', methods=['POST'])
+@login_required
 def blur_and_export_image():
     """Apply blur to selected fields and export the modified image."""
     try:
@@ -770,14 +775,16 @@ def blur_and_export_image():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-def save_to_history(data):
-    """Save processing record to MongoDB history."""
-    db_manager.save_record(data)
+def save_to_history(data, user_id=None):
+    """Save processing record to MongoDB history with user_id."""
+    db_manager.save_record(data, user_id)
 
 @app.route('/api/history', methods=['GET'])
+@login_required
 def get_history():
-    """Get processing history from MongoDB."""
-    records = db_manager.get_history()
+    """Get processing history from MongoDB for the current user."""
+    user_id = session.get('user_id')
+    records = db_manager.get_history(user_id=user_id)
     if records is None:
         return jsonify({'success': False, 'error': 'Database not connected'}), 503
     
@@ -847,6 +854,84 @@ def logout():
     """Logout user and clear session."""
     session.clear()
     return redirect(url_for('login_page'))
+
+
+# ===== SETTINGS ROUTES =====
+
+@app.route('/settings')
+@login_required
+def settings_page():
+    """User settings page."""
+    return render_template('settings.html')
+
+
+@app.route('/api/user/profile', methods=['GET'])
+@login_required
+def get_user_profile():
+    """Get current user's profile information."""
+    try:
+        user_id = session.get('user_id')
+        user = get_user_by_id(user_id)
+        
+        if user:
+            return jsonify({'success': True, 'user': user})
+        else:
+            return jsonify({'success': False, 'message': 'User not found'}), 404
+            
+    except Exception as e:
+        print(f"Profile fetch error: {e}")
+        return jsonify({'success': False, 'message': 'Error fetching profile'}), 500
+
+
+@app.route('/api/user/update-profile', methods=['POST'])
+@login_required
+def update_user_profile():
+    """Update user's profile information (email)."""
+    try:
+        user_id = session.get('user_id')
+        data = request.get_json()
+        new_email = data.get('email', '').strip()
+        
+        if not new_email:
+            return jsonify({'success': False, 'message': 'Email is required'}), 400
+        
+        result = update_user_email(user_id, new_email)
+        
+        if result['success']:
+            # Update session email
+            session['email'] = new_email
+            return jsonify({'success': True, 'message': result['message']})
+        else:
+            return jsonify({'success': False, 'message': result['message']}), 400
+            
+    except Exception as e:
+        print(f"Profile update error: {e}")
+        return jsonify({'success': False, 'message': 'Error updating profile'}), 500
+
+
+@app.route('/api/user/change-password', methods=['POST'])
+@login_required
+def change_user_password():
+    """Change user's password."""
+    try:
+        user_id = session.get('user_id')
+        data = request.get_json()
+        current_password = data.get('current_password', '')
+        new_password = data.get('new_password', '')
+        
+        if not current_password or not new_password:
+            return jsonify({'success': False, 'message': 'All fields are required'}), 400
+        
+        result = change_password(user_id, current_password, new_password)
+        
+        if result['success']:
+            return jsonify({'success': True, 'message': result['message']})
+        else:
+            return jsonify({'success': False, 'message': result['message']}), 400
+            
+    except Exception as e:
+        print(f"Password change error: {e}")
+        return jsonify({'success': False, 'message': 'Error changing password'}), 500
 
 
 if __name__ == '__main__':

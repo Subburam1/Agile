@@ -8,18 +8,33 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap"
         rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
         :root {
-            --primary: #6366f1;
-            --primary-dark: #4f46e5;
+            --primary: #4f46e5;
+            --primary-light: #6366f1;
+            --primary-dark: #4338ca;
             --secondary: #8b5cf6;
             --success: #10b981;
+            --success-light: #34d399;
             --danger: #ef4444;
+            --danger-light: #f87171;
             --warning: #f59e0b;
+            --warning-light: #fbbf24;
+            --info: #3b82f6;
             --dark: #1e293b;
+            --dark-light: #334155;
             --light: #f8fafc;
-            --glass-bg: rgba(255, 255, 255, 0.15);
-            --glass-border: rgba(255, 255, 255, 0.3);
+            --gray: #64748b;
+            --gray-light: #94a3b8;
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-tertiary: #334155;
+            --glass-bg: rgba(30, 41, 59, 0.7);
+            --glass-border: rgba(100, 116, 139, 0.3);
+            --text-primary: #f8fafc;
+            --text-secondary: #cbd5e1;
+            --text-muted: #94a3b8;
         }
 
         * {
@@ -30,35 +45,19 @@
 
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: linear-gradient(-45deg, #667eea, #764ba2, #f093fb, #4facfe);
-            background-size: 400% 400%;
-            animation: gradientShift 15s ease infinite;
+            background: var(--bg-primary);
             min-height: 100vh;
             display: flex;
             flex-direction: column;
-            color: white;
-        }
-
-        @keyframes gradientShift {
-            0% {
-                background-position: 0% 50%;
-            }
-
-            50% {
-                background-position: 100% 50%;
-            }
-
-            100% {
-                background-position: 0% 50%;
-            }
+            color: var(--text-primary);
         }
 
         /* Header Styles */
         .header {
-            background: rgba(255, 255, 255, 0.1);
+            background: var(--bg-secondary);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            border-bottom: 1px solid var(--glass-border);
             padding: 15px 40px;
             display: flex;
             justify-content: space-between;
@@ -66,7 +65,7 @@
             position: sticky;
             top: 0;
             z-index: 1000;
-            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
         }
 
         .header-brand {
@@ -77,15 +76,16 @@
         }
 
         .header-logo {
-            font-size: 2rem;
-            background: white;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
             width: 45px;
             height: 45px;
             display: flex;
             align-items: center;
             justify-content: center;
             border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);
+            color: white;
+            font-size: 1.2rem;
         }
 
         .header-text h1 {
@@ -93,13 +93,13 @@
             font-size: 1.4rem;
             font-weight: 700;
             margin: 0;
-            color: white;
+            color: var(--text-primary);
             letter-spacing: -0.5px;
         }
 
         .header-text p {
             font-size: 0.8rem;
-            color: rgba(255, 255, 255, 0.8);
+            color: var(--text-muted);
             margin: 0;
         }
 
@@ -110,7 +110,7 @@
         }
 
         .nav-link {
-            color: rgba(255, 255, 255, 0.9);
+            color: var(--text-secondary);
             text-decoration: none;
             font-weight: 500;
             font-size: 0.95rem;
@@ -120,24 +120,26 @@
         }
 
         .nav-link:hover {
-            background: rgba(255, 255, 255, 0.15);
-            color: white;
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
         }
 
         .nav-btn {
-            background: white;
-            color: var(--primary);
+            background: var(--primary);
+            color: white;
             padding: 8px 20px;
             border-radius: 20px;
             font-weight: 600;
             text-decoration: none;
             font-size: 0.9rem;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            transition: transform 0.2s;
+            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+            transition: all 0.3s ease;
         }
 
         .nav-btn:hover {
+            background: var(--primary-dark);
             transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(79, 70, 229, 0.4);
         }
 
         /* Main Content */
@@ -156,7 +158,7 @@
             border: 1px solid var(--glass-border);
             border-radius: 24px;
             padding: 40px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1), 0 0 80px rgba(99, 102, 241, 0.15);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
         }
 
         .page-title {
@@ -165,22 +167,20 @@
             font-weight: 700;
             text-align: center;
             margin-bottom: 10px;
-            background: linear-gradient(135deg, #fff 0%, #e0e7ff 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            color: var(--text-primary);
         }
 
         .page-subtitle {
             text-align: center;
-            color: rgba(255, 255, 255, 0.8);
+            color: var(--text-secondary);
             margin-bottom: 40px;
             font-size: 1.1rem;
         }
 
         /* Upload Area */
         .upload-area {
-            background: rgba(255, 255, 255, 0.1);
-            border: 2px dashed rgba(255, 255, 255, 0.4);
+            background: var(--bg-secondary);
+            border: 2px dashed var(--gray);
             border-radius: 20px;
             padding: 60px 40px;
             text-align: center;
@@ -189,15 +189,17 @@
         }
 
         .upload-area:hover {
-            background: rgba(255, 255, 255, 0.15);
-            border-color: rgba(255, 255, 255, 0.6);
+            background: var(--bg-tertiary);
+            border-color: var(--primary);
             transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(79, 70, 229, 0.2);
         }
 
         .upload-icon {
             font-size: 4rem;
             margin-bottom: 20px;
             animation: float 3s ease-in-out infinite;
+            color: var(--primary-light);
         }
 
         @keyframes float {
@@ -215,13 +217,13 @@
         .upload-area h2 {
             font-family: 'Outfit', sans-serif;
             font-size: 1.75rem;
-            color: white;
+            color: var(--text-primary);
             margin-bottom: 12px;
             font-weight: 600;
         }
 
         .upload-area p {
-            color: rgba(255, 255, 255, 0.8);
+            color: var(--text-secondary);
             font-size: 1rem;
         }
 
@@ -249,14 +251,14 @@
         }
 
         .alert-success {
-            background: rgba(16, 185, 129, 0.15);
-            color: #d1fae5;
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--success-light);
             border-left-color: var(--success);
         }
 
         .alert-error {
-            background: rgba(239, 68, 68, 0.15);
-            color: #fee2e2;
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger-light);
             border-left-color: var(--danger);
         }
 
@@ -265,15 +267,15 @@
             display: none;
             text-align: center;
             padding: 40px;
-            color: white;
+            color: var(--text-primary);
             font-size: 1.1rem;
         }
 
         .spinner {
             width: 50px;
             height: 50px;
-            border: 4px solid rgba(255, 255, 255, 0.2);
-            border-top-color: white;
+            border: 4px solid var(--bg-tertiary);
+            border-top-color: var(--primary);
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
             margin: 0 auto 20px;
@@ -312,8 +314,8 @@
 
         /* Document Type Banner */
         .document-type-banner {
-            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.15));
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: var(--bg-secondary);
+            border: 1px solid var(--glass-border);
             border-radius: 16px;
             padding: 20px 28px;
             margin: 24px 0;
@@ -325,6 +327,14 @@
 
         .doc-type-icon {
             font-size: 2.5rem;
+            width: 60px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            color: var(--primary-light);
         }
 
         .doc-type-info {
@@ -335,17 +345,17 @@
             font-family: 'Outfit', sans-serif;
             font-size: 1.5rem;
             font-weight: 700;
-            color: white;
+            color: var(--text-primary);
             margin-bottom: 4px;
         }
 
         .doc-type-meta {
-            color: rgba(255, 255, 255, 0.7);
+            color: var(--text-muted);
             font-size: 0.9rem;
         }
 
         .confidence-badge {
-            background: linear-gradient(135deg, var(--success), #059669);
+            background: var(--success);
             color: white;
             padding: 8px 16px;
             border-radius: 20px;
@@ -354,7 +364,7 @@
         }
 
         .confidence-low {
-            background: linear-gradient(135deg, var(--warning), #d97706);
+            background: var(--warning);
         }
 
         /* Fields List */
@@ -368,12 +378,12 @@
         .section-header h3 {
             font-family: 'Outfit', sans-serif;
             font-size: 1.5rem;
-            color: white;
+            color: var(--text-primary);
             font-weight: 600;
         }
 
         .badge {
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            background: var(--primary);
             color: white;
             padding: 6px 16px;
             border-radius: 20px;
@@ -382,9 +392,9 @@
         }
 
         .field-item {
-            background: rgba(255, 255, 255, 0.08);
+            background: var(--bg-secondary);
             backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.15);
+            border: 1px solid var(--glass-border);
             border-left: 4px solid var(--primary);
             padding: 16px 20px;
             margin: 12px 0;
@@ -394,13 +404,14 @@
         }
 
         .field-item:hover {
-            background: rgba(255, 255, 255, 0.12);
+            background: var(--bg-tertiary);
             transform: translateX(4px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
         }
 
         .field-item.sensitive {
             border-left-color: var(--danger);
-            background: rgba(239, 68, 68, 0.08);
+            background: rgba(239, 68, 68, 0.1);
         }
 
         .field-item label {
@@ -408,7 +419,7 @@
             display: flex;
             align-items: center;
             gap: 12px;
-            color: white;
+            color: var(--text-primary);
             font-size: 0.95rem;
         }
 
@@ -421,21 +432,21 @@
 
         .field-name {
             font-weight: 600;
-            color: white;
+            color: var(--text-primary);
         }
 
         .field-value {
-            color: rgba(255, 255, 255, 0.9);
+            color: var(--text-secondary);
         }
 
         .field-meta {
-            color: rgba(255, 255, 255, 0.6);
+            color: var(--text-muted);
             font-size: 0.85rem;
             margin-left: auto;
         }
 
         .sensitive-tag {
-            background: linear-gradient(135deg, var(--danger), #dc2626);
+            background: var(--danger);
             color: white;
             padding: 4px 12px;
             border-radius: 12px;
@@ -458,23 +469,26 @@
         }
 
         .btn-success {
-            background: linear-gradient(135deg, var(--success), #059669);
+            background: var(--success);
             color: white;
             box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3);
         }
 
         .btn-success:hover {
+            background: var(--success-light);
             transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
         }
 
         .btn-secondary {
-            background: rgba(255, 255, 255, 0.15);
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.3);
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--glass-border);
         }
 
         .btn-secondary:hover {
-            background: rgba(255, 255, 255, 0.25);
+            background: var(--bg-secondary);
+            border-color: var(--primary);
         }
 
         button:disabled {
@@ -483,15 +497,15 @@
         }
 
         .slider-container {
-            background: rgba(255, 255, 255, 0.08);
+            background: var(--bg-secondary);
             padding: 24px;
             border-radius: 16px;
             margin: 24px 0;
-            border: 1px solid rgba(255, 255, 255, 0.15);
+            border: 1px solid var(--glass-border);
         }
 
         .slider-label {
-            color: white;
+            color: var(--text-primary);
             font-size: 1rem;
             font-weight: 500;
             margin-bottom: 16px;
@@ -499,9 +513,7 @@
         }
 
         .slider-value {
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            color: var(--primary-light);
             font-weight: 700;
             font-size: 1.5rem;
         }
@@ -510,7 +522,7 @@
             width: 100%;
             height: 8px;
             border-radius: 4px;
-            background: rgba(255, 255, 255, 0.15);
+            background: var(--bg-tertiary);
             outline: none;
         }
 
@@ -531,10 +543,10 @@
 
         /* Footer Styles */
         .footer {
-            background: rgba(255, 255, 255, 0.1);
+            background: var(--bg-secondary);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
-            border-top: 1px solid rgba(255, 255, 255, 0.2);
+            border-top: 1px solid var(--glass-border);
             padding: 30px 40px;
             margin-top: auto;
         }
@@ -550,13 +562,20 @@
         }
 
         .footer-info {
-            color: rgba(255, 255, 255, 0.8);
+            color: var(--text-secondary);
             font-size: 0.9rem;
         }
 
         .footer-info strong {
             color: white;
             font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .footer-info strong i {
+            color: var(--primary);
         }
 
         .footer-links {
@@ -565,18 +584,18 @@
         }
 
         .footer-links a {
-            color: rgba(255, 255, 255, 0.7);
+            color: var(--text-muted);
             text-decoration: none;
             font-size: 0.9rem;
             transition: color 0.3s;
         }
 
         .footer-links a:hover {
-            color: white;
+            color: var(--text-primary);
         }
 
         .footer-tech {
-            color: rgba(255, 255, 255, 0.6);
+            color: var(--text-muted);
             font-size: 0.85rem;
         }
     </style>
@@ -585,18 +604,20 @@
 <body>
     <!-- Header -->
     <header class="header">
-        <a href="#" class="header-brand">
-            <div class="header-logo">🔒</div>
+        <a href="/document-redaction" class="header-brand">
+            <div class="header-logo">
+                <i class="fas fa-shield-alt"></i>
+            </div>
             <div class="header-text">
-                <h1>SecureRedact</h1>
-                <p>Enterprise Grade Protection</p>
+                <h1>SecureRedact Pro</h1>
+                <p>Enterprise Document Security</p>
             </div>
         </a>
         <nav class="header-nav">
-            <a href="#" class="nav-link">Dashboard</a>
-            <a href="#" class="nav-link" onclick="showHistory()">History</a>
-            <a href="#" class="nav-link">Settings</a>
-            <a href="#" class="nav-btn">My Account</a>
+            <a href="/document-redaction" class="nav-link"><i class="fas fa-home"></i> Dashboard</a>
+            <a href="#" class="nav-link" onclick="showHistory()"><i class="fas fa-history"></i> History</a>
+            <a href="/settings" class="nav-link"><i class="fas fa-cog"></i> Settings</a>
+            <a href="/logout" class="nav-btn"><i class="fas fa-user-circle"></i> Logout</a>
         </nav>
     </header>
 
@@ -611,7 +632,9 @@
 
             <div class="upload-section" id="uploadSection">
                 <div class="upload-area" onclick="document.getElementById('fileInput').click()">
-                    <div class="upload-icon">📄</div>
+                    <div class="upload-icon">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                    </div>
                     <h2>Upload Document</h2>
                     <p>Click here or drag and drop your document to start</p>
                     <input type="file" id="fileInput" accept="image/*" style="display:none"
@@ -642,9 +665,9 @@
                 </div>
 
                 <div class="control-panel">
-                    <button class="btn-secondary" onclick="selectAll()">✓ Select All</button>
-                    <button class="btn-secondary" onclick="selectSensitive()">⚠️ Select Sensitive</button>
-                    <button class="btn-secondary" onclick="clearAll()">✗ Clear All</button>
+                    <button class="btn-secondary" onclick="selectAll()"><i class="fas fa-check-double"></i> Select All</button>
+                    <button class="btn-secondary" onclick="selectSensitive()"><i class="fas fa-exclamation-triangle"></i> Select Sensitive</button>
+                    <button class="btn-secondary" onclick="clearAll()"><i class="fas fa-times-circle"></i> Clear All</button>
                 </div>
 
                 <div id="fieldsList"></div>
@@ -659,9 +682,9 @@
 
                 <div class="action-buttons">
                     <button class="btn-success" id="downloadBtn" onclick="downloadRedacted()" disabled>
-                        💾 Download Redacted Document
+                        <i class="fas fa-download"></i> Download Redacted Document
                     </button>
-                    <button class="btn-secondary" onclick="reset()">🔄 Upload New Document</button>
+                    <button class="btn-secondary" onclick="reset()"><i class="fas fa-redo"></i> Upload New Document</button>
                 </div>
             </div>
         </div>
@@ -671,20 +694,15 @@
     <footer class="footer">
         <div class="footer-content">
             <div class="footer-info">
-                <strong>SecureRedact AI</strong> &copy; 2025. All rights reserved.
+                <strong><i class="fas fa-shield-alt"></i> SecureRedact Pro</strong> &copy; 2025. All rights reserved.
             </div>
             <div class="footer-links">
-                <a href="#">Privacy Policy</a>
-                <a href="#">Terms of Service</a>
-                <a href="#">Support</a>
+                <a href="#"><i class="fas fa-lock"></i> Privacy Policy</a>
+                <a href="#"><i class="fas fa-file-contract"></i> Terms of Service</a>
+                <a href="#"><i class="fas fa-life-ring"></i> Support</a>
             </div>
             <div class="footer-tech">
-                <a href="#">Privacy Policy</a>
-                <a href="#">Terms of Service</a>
-                <a href="#">Support</a>
-            </div>
-            <div class="footer-tech">
-                Powered by <span>OpenCV</span> • <span>Tesseract OCR</span> • <span>Flask</span>
+                Powered by <span><i class="fas fa-brain"></i> OpenCV</span> • <span><i class="fas fa-eye"></i> Tesseract OCR</span> • <span><i class="fas fa-server"></i> Flask</span>
             </div>
         </div>
     </footer>
@@ -721,25 +739,25 @@
                 // Display document type
                 if (data.document_type) {
                     const docTypeIcons = {
-                        'Aadhaar Card': '🆔',
-                        'PAN Card': '💳',
-                        'Passport': '🛂',
-                        'Voter ID Card': '🗳️',
-                        'Driving License': '🚗',
-                        'Marksheet': '📊',
-                        'College ID Card': '🎓',
-                        'Bank Passbook': '🏦',
-                        'Bank Statement': '📈',
-                        'Invoice': '🧾',
-                        'Bill/Receipt': '🧾',
-                        'Salary Slip': '💰',
-                        'Unknown Document': '📄'
+                        'Aadhaar Card': '<i class="fas fa-id-card"></i>',
+                        'PAN Card': '<i class="fas fa-credit-card"></i>',
+                        'Passport': '<i class="fas fa-passport"></i>',
+                        'Voter ID Card': '<i class="fas fa-vote-yea"></i>',
+                        'Driving License': '<i class="fas fa-car"></i>',
+                        'Marksheet': '<i class="fas fa-graduation-cap"></i>',
+                        'College ID Card': '<i class="fas fa-user-graduate"></i>',
+                        'Bank Passbook': '<i class="fas fa-university"></i>',
+                        'Bank Statement': '<i class="fas fa-chart-line"></i>',
+                        'Invoice': '<i class="fas fa-file-invoice"></i>',
+                        'Bill/Receipt': '<i class="fas fa-receipt"></i>',
+                        'Salary Slip': '<i class="fas fa-money-check-alt"></i>',
+                        'Unknown Document': '<i class="fas fa-file-alt"></i>'
                     };
 
-                    const icon = docTypeIcons[data.document_type] || '📄';
+                    const icon = docTypeIcons[data.document_type] || '<i class="fas fa-file-alt"></i>';
                     const confidence = Math.round(data.document_confidence * 100);
 
-                    document.getElementById('docTypeIcon').textContent = icon;
+                    document.getElementById('docTypeIcon').innerHTML = icon;
                     document.getElementById('docTypeName').textContent = data.document_type;
                     document.getElementById('docTypeConfidence').textContent = confidence + '%';
                     document.getElementById('docTypeConfidence').className =
@@ -761,7 +779,7 @@
                         <span class="field-name">${f.field_name}</span>
                         <span class="field-value">: ${f.field_value}</span>
                         <span class="field-meta">${f.category}, ${Math.round(f.confidence * 100)}%</span>
-                        ${f.is_sensitive ? '<span class="sensitive-tag">⚠️ Sensitive</span>' : ''}
+                        ${f.is_sensitive ? '<span class="sensitive-tag"><i class="fas fa-exclamation-triangle"></i> Sensitive</span>' : ''}
                 </label>
                 `;
                     list.appendChild(div);
@@ -772,7 +790,7 @@
                 hide('loading');
                 hide('uploadSection');
                 show('previewSection');
-                showSuccess(`✓ Detected: ${data.document_type} | Found ${data.detected_fields.length} fields`);
+                showSuccess(`<i class="fas fa-check-circle"></i> Detected: ${data.document_type} | Found ${data.detected_fields.length} fields`);
                 updateBtn();
 
             } catch (err) {
@@ -851,7 +869,7 @@
                 link.click();
 
                 hide('loading');
-                showSuccess('✓ Document downloaded successfully!');
+                showSuccess('<i class="fas fa-check-circle"></i> Document downloaded successfully!');
 
             } catch (err) {
                 showError('Download error: ' + err.message);
@@ -901,18 +919,18 @@
                 if (data.success && data.history.length > 0) {
                     list.innerHTML = data.history.map(item => `
                         <div class="history-item">
-                            <div class="history-icon">📄</div>
+                            <div class="history-icon"><i class="fas fa-file-alt"></i></div>
                             <div class="history-details">
                                 <div class="history-name">${item.filename}</div>
                                 <div class="history-meta">
                                     ${item.document_type} • ${item.total_fields} fields • ${new Date(item.timestamp).toLocaleString()}
                                 </div>
                             </div>
-                            <div class="history-status">${item.status}</div>
+                            <div class="history-status"><i class="fas fa-check-circle"></i> ${item.status}</div>
                         </div>
                     `).join('');
                 } else {
-                    list.innerHTML = '<div style="text-align:center; color:rgba(255,255,255,0.6); padding:20px">No history found</div>';
+                    list.innerHTML = '<div style="text-align:center; color:rgba(255,255,255,0.6); padding:20px"><i class="fas fa-inbox"></i> No history found</div>';
                 }
             } catch (err) {
                 list.innerHTML = '<div style="text-align:center; color:var(--danger)">Failed to load history</div>';
@@ -936,7 +954,7 @@
     <div id="historyModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Processing History</h2>
+                <h2><i class="fas fa-history"></i> Processing History</h2>
                 <span class="close-modal" onclick="closeHistory()">&times;</span>
             </div>
             <div id="historyList" class="history-list"></div>
@@ -960,15 +978,15 @@
         }
 
         .modal-content {
-            background: rgba(30, 41, 59, 0.95);
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: var(--bg-secondary);
+            border: 1px solid var(--glass-border);
             border-radius: 16px;
             width: 90%;
             max-width: 600px;
             max-height: 80vh;
             display: flex;
             flex-direction: column;
-            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
             animation: slideUp 0.3s ease;
         }
 
@@ -986,7 +1004,7 @@
 
         .modal-header {
             padding: 20px 24px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            border-bottom: 1px solid var(--glass-border);
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -995,12 +1013,12 @@
         .modal-header h2 {
             margin: 0;
             font-family: 'Outfit', sans-serif;
-            color: white;
+            color: var(--text-primary);
             font-size: 1.5rem;
         }
 
         .close-modal {
-            color: rgba(255, 255, 255, 0.6);
+            color: var(--text-muted);
             font-size: 28px;
             font-weight: bold;
             cursor: pointer;
@@ -1008,7 +1026,7 @@
         }
 
         .close-modal:hover {
-            color: white;
+            color: var(--text-primary);
         }
 
         .history-list {
@@ -1021,23 +1039,24 @@
             align-items: center;
             gap: 15px;
             padding: 16px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            border-bottom: 1px solid var(--glass-border);
             transition: background 0.2s;
         }
 
         .history-item:hover {
-            background: rgba(255, 255, 255, 0.05);
+            background: var(--bg-tertiary);
         }
 
         .history-icon {
             font-size: 1.5rem;
-            background: rgba(255, 255, 255, 0.1);
+            background: var(--bg-tertiary);
             width: 40px;
             height: 40px;
             display: flex;
             align-items: center;
             justify-content: center;
             border-radius: 10px;
+            color: var(--primary-light);
         }
 
         .history-details {
@@ -1045,19 +1064,19 @@
         }
 
         .history-name {
-            color: white;
+            color: var(--text-primary);
             font-weight: 600;
             margin-bottom: 4px;
         }
 
         .history-meta {
-            color: rgba(255, 255, 255, 0.6);
+            color: var(--text-muted);
             font-size: 0.85rem;
         }
 
         .history-status {
             background: rgba(16, 185, 129, 0.2);
-            color: #6ee7b7;
+            color: var(--success-light);
             padding: 4px 10px;
             border-radius: 12px;
             font-size: 0.75rem;
