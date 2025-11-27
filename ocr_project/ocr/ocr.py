@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Union, Optional
 
-from .preprocess import preprocess_with_advanced_opencv
+from .preprocess import preprocess_image
 
 
 def extract_text(image_input: Union[str, Path, Image.Image], 
@@ -66,9 +66,7 @@ def extract_text_from_file(image_path: Union[str, Path],
         Extracted text as string
     """
     if preprocess:
-        # Preprocess the image for better OCR accuracy
-        preprocessing_result = preprocess_with_advanced_opencv(image_path)
-        processed_image = preprocessing_result.get('processed_image') if preprocessing_result.get('success') else None
+        processed_image = preprocess_image(image_path)
         return extract_text(processed_image, lang=lang, config=config)
     else:
         return extract_text(image_path, lang=lang, config=config)

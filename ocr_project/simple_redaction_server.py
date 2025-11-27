@@ -3,7 +3,7 @@ Simple single-file Document Redaction Server with OCR Field Detection
 Detects sensitive fields from Indian documents automatically.
 """
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, session, redirect, url_for
 from pathlib import Path
 import base64
 import os
@@ -13,16 +13,33 @@ import re
 import pytesseract
 import uuid
 import datetime
+from datetime import timedelta
+from functools import wraps
 from db_utils import db_manager
+import auth_db
+from auth_db import register_user, login_user, get_user_by_id
 
 # Configure pytesseract path (update if needed)
 # pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['SECRET_KEY'] = 'your-secret-key-change-this-in-production'  # Change this!
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 # Create upload folder
 Path(app.config['UPLOAD_FOLDER']).mkdir(exist_ok=True)
+
+
+# ===== AUTHENTICATION DECORATOR =====
+def login_required(f):
+    """Decorator to require authentication for routes."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return redirect(url_for('login_page'))
+        return f(*args, **kwargs)
+    return decorated_function
 
 
 def detect_document_type(text, image_path=None):
@@ -570,7 +587,12 @@ def detect_sensitive_fields(text, image_path=None):
 @app.route('/document-redaction')
 def document_redaction_page():
     """Document redaction page."""
-    return render_template('document_redaction.html')
+    return render_template('index.html')
+
+@app.route('/history')
+def history_page():
+    """Processing history page."""
+    return render_template('history.html')
 
 @app.route('/api/process-for-redaction', methods=['POST'])
 def process_for_redaction():
@@ -761,7 +783,74 @@ def get_history():
     
     return jsonify({'success': True, 'history': records})
 
+
+# ===== AUTHENTICATION ROUTES =====
+
+@app.route('/login', methods=['GET', 'POST'])
+def login_page():
+    """Login page and authentication."""
+    if request.method == 'GET':
+        if 'user_id' in session:
+            return redirect(url_for('document_redaction'))
+        return render_template('login.html')
+    
+    try:
+        data = request.get_json()
+        username = data.get('username', '').strip()
+        password = data.get('password', '')
+        
+        result = login_user(username, password)
+        
+        if result['success']:
+            session.permanent = True
+            session['user_id'] = result['user']['id']
+            session['username'] = result['user']['username']
+            session['email'] = result['user']['email']
+            
+            return jsonify({'success': True, 'message': 'Login successful', 'user': result['user']})
+        else:
+            return jsonify({'success': False, 'message': result['message']}), 401
+            
+    except Exception as e:
+        print(f"Login error: {e}")
+        return jsonify({'success': False, 'message': 'An error occurred during login'}), 500
+
+
+@app.route('/register', methods=['GET', 'POST'])
+def register_page():
+    """Registration page and user creation."""
+    if request.method == 'GET':
+        if 'user_id' in session:
+            return redirect(url_for('document_redaction'))
+        return render_template('register.html')
+    
+    try:
+        data = request.get_json()
+        username = data.get('username', '').strip()
+        email = data.get('email', '').strip()
+        password = data.get('password', '')
+        
+        result = register_user(username, email, password)
+        
+        if result['success']:
+            return jsonify({'success': True, 'message': 'Registration successful'})
+        else:
+            return jsonify({'success': False, 'message': result['message']}), 400
+            
+    except Exception as e:
+        print(f"Registration error: {e}")
+        return jsonify({'success': False, 'message': 'An error occurred during registration'}), 500
+
+
+@app.route('/logout')
+def logout():
+    """Logout user and clear session."""
+    session.clear()
+    return redirect(url_for('login_page'))
+
+
 if __name__ == '__main__':
+
     print("🚀 Starting Simple Redaction Server...")
     print("🌐 Access at: http://localhost:5555/document-redaction")
     print("✨ This is a simplified server while app.py is being fixed")

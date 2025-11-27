@@ -2011,21 +2011,7 @@
                 <li class="nav-item">
                     <a href="#" class="nav-link active" onclick="switchTab('upload')" id="nav-upload">
                         <i class="fas fa-cloud-upload-alt"></i>
-                        <span>Upload Images</span>
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="/document-processing" class="nav-link">
-                        <i class="fas fa-file-alt"></i>
-                        <span>Document Processing</span>
-                        <span class="nav-badge">NEW</span>
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="/field-detection" class="nav-link">
-                        <i class="fas fa-search-plus"></i>
-                        <span>Field Detection</span>
-                        <span class="nav-badge" style="background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);">AI</span>
+                        <span>Upload Documents</span>
                     </a>
                 </li>
                 <li class="nav-item">
@@ -2329,17 +2315,6 @@
                                     </button>
                                     <button class="btn btn-info" id="generateFormBtn" onclick="generateFormFromSelected()" disabled>
                                         <i class="fas fa-edit"></i> Generate Form
-                                    </button>
-                                </div>
-                                <div class="action-row">
-                                    <button class="btn btn-warning" id="toggleBlurBtn" onclick="toggleBlurMode()">
-                                        <i class="fas fa-eye-slash"></i> Blur Mode
-                                    </button>
-                                    <button class="btn btn-danger" id="exportBlurredBtn" onclick="exportBlurredImage()" disabled>
-                                        <i class="fas fa-download"></i> Export Blurred Image
-                                    </button>
-                                    <button class="btn btn-secondary" id="togglePreviewBtn" onclick="togglePreviewMode()">
-                                        <i class="fas fa-eye"></i> Preview Mode
                                     </button>
                                 </div>
                             </div>
@@ -3292,12 +3267,10 @@
             const copyBtn = document.getElementById('copySelectedBtn');
             const exportBtn = document.getElementById('exportJsonBtn');
             const formBtn = document.getElementById('generateFormBtn');
-            const exportBlurredBtn = document.getElementById('exportBlurredBtn');
             
             copyBtn.disabled = selectedCount === 0;
             exportBtn.disabled = selectedCount === 0;
             formBtn.disabled = selectedCount === 0;
-            if (exportBlurredBtn) exportBlurredBtn.disabled = selectedCount === 0;
             
             // Update selected fields display
             updateSelectedFieldsDisplay();
@@ -3595,101 +3568,6 @@
             
             showStatus(`<i class="fas fa-download"></i> Exported ${exportData.length} fields to JSON!`, 'success');
             setTimeout(hideStatus, 3000);
-        }
-        
-        function exportBlurredImage() {
-            const imageContainer = document.getElementById('imageContainer');
-            const uploadedImage = document.getElementById('uploadedImage');
-            
-            if (!uploadedImage || !uploadedImage.src) {
-                showStatus('No image available for export', 'error');
-                return;
-            }
-            
-            // Get selected fields
-            const selectedFields = getSelectedFieldsForBlur();
-            
-            if (selectedFields.length === 0) {
-                showStatus('Please select fields to blur before exporting', 'warning');
-                return;
-            }
-            
-            showStatus('Processing image with blur effects...', 'info');
-            
-            // Convert image to base64
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            const img = new Image();
-            
-            img.onload = function() {
-                canvas.width = img.width;
-                canvas.height = img.height;
-                ctx.drawImage(img, 0, 0);
-                
-                const imageData = canvas.toDataURL('image/png');
-                
-                // Send to backend for blur processing
-                fetch('/api/blur-and-export', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        image_data: imageData,
-                        selected_fields: selectedFields,
-                        blur_strength: 12
-                    })
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        // Download the blurred image
-                        downloadImage(data.blurred_image, 'blurred_document.png');
-                        showStatus(data.message + ' - Image downloaded!', 'success');
-                    } else {
-                        showStatus('Failed to blur image: ' + data.error, 'error');
-                    }
-                })
-                .catch(error => {
-                    console.error('Blur export error:', error);
-                    showStatus('Error processing blur: ' + error.message, 'error');
-                });
-            };
-            
-            img.crossOrigin = 'anonymous';
-            img.src = uploadedImage.src;
-        }
-        
-        function getSelectedFieldsForBlur() {
-            const selectedFields = [];
-            const checkboxes = document.querySelectorAll('.suggestion-checkbox:checked');
-            
-            checkboxes.forEach((checkbox, index) => {
-                const overlayId = `overlay_${checkbox.id.replace('field_', '')}`;
-                const overlay = document.getElementById(overlayId);
-                
-                if (overlay) {
-                    const style = overlay.style;
-                    selectedFields.push({
-                        x: parseFloat(style.left.replace('%', '')),
-                        y: parseFloat(style.top.replace('%', '')),
-                        width: parseFloat(style.width.replace('%', '')),
-                        height: parseFloat(style.height.replace('%', '')),
-                        field_name: checkbox.dataset.fieldName || `field_${index}`
-                    });
-                }
-            });
-            
-            return selectedFields;
-        }
-        
-        function downloadImage(dataUrl, filename) {
-            const link = document.createElement('a');
-            link.href = dataUrl;
-            link.download = filename;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
         }
         
         function saveGeneratedForm() {

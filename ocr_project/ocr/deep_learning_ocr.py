@@ -1,15 +1,15 @@
 """
 Deep Learning OCR Module
-Advanced OCR using EasyOCR and PaddleOCR neural networks with advanced preprocessing
-Supports multiple languages and provides superior accuracy through image enhancement
+Advanced OCR using EasyOCR and PaddleOCR neural networks
+Supports multiple languages and provides superior accuracy
 """
 
 import os
 import cv2
 import numpy as np
-import logging
 from typing import List, Dict, Tuple, Optional, Any
-from .preprocess import preprocess_with_advanced_opencv, AdvancedImagePreprocessor
+import logging
+from pathlib import Path
 import json
 import time
 
@@ -18,18 +18,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class DeepLearningOCR:
-    """Advanced OCR using deep learning models with comprehensive preprocessing."""
+    """Advanced OCR using deep learning models."""
     
     def __init__(self):
-        """Initialize deep learning OCR engines and advanced preprocessor."""
+        """Initialize deep learning OCR engines."""
         self.easyocr_reader = None
         self.paddleocr_reader = None
         self.torch_available = False
         self.paddle_available = False
-        
-        # Initialize advanced image preprocessor
-        self.preprocessor = AdvancedImagePreprocessor()
-        logger.info("✅ Advanced Image Preprocessor initialized")
         
         # Initialize engines
         self._initialize_easyocr()
@@ -77,122 +73,71 @@ class DeepLearningOCR:
             return False
     
     def extract_text_easyocr(self, image_path: str, **kwargs) -> Dict[str, Any]:
-        """Extract text using EasyOCR with advanced preprocessing strategies."""
+        """Extract text using EasyOCR with enhanced preprocessing for ID cards."""
         if not self.easyocr_reader:
             return {'error': 'EasyOCR not available', 'text': '', 'confidence': 0.0}
         
         try:
             start_time = time.time()
             
-            # Read original image
+            # Read and preprocess image with multiple strategies
             image = cv2.imread(image_path)
             if image is None:
                 return {'error': 'Could not read image', 'text': '', 'confidence': 0.0}
             
-            # Use advanced preprocessing strategies for optimal text detection
-            preprocessing_strategies = []
-            
-            # Original image
-            preprocessing_strategies.append({'name': 'original', 'image': image})
-            
-            # Try all advanced preprocessing strategies from AdvancedImagePreprocessor
-            for strategy_name in ['grayscale_enhanced', 'high_contrast', 'adaptive_threshold', 
-                                'noise_removal', 'deskewing', 'morphological', 'color_quantization', 
-                                'text_enhancement', 'shadow_removal']:
-                try:
-                    preprocessed_img = self.preprocessor.apply_strategy(image, strategy_name)
-                    preprocessing_strategies.append({
-                        'name': strategy_name, 
-                        'image': preprocessed_img
-                    })
-                except Exception as e:
-                    logger.warning(f"Failed to apply preprocessing strategy '{strategy_name}': {e}")
-                    continue
-            
-            # Try document-specific pipelines
-            for pipeline_name in ['document_pipeline', 'id_card_pipeline', 'handwritten_pipeline']:
-                try:
-                    if pipeline_name == 'document_pipeline':
-                        preprocessed_img = self.preprocessor.document_pipeline(image)
-                    elif pipeline_name == 'id_card_pipeline':
-                        preprocessed_img = self.preprocessor.id_card_pipeline(image)
-                    else:
-                        preprocessed_img = self.preprocessor.handwritten_pipeline(image)
-                    
-                    preprocessing_strategies.append({
-                        'name': pipeline_name, 
-                        'image': preprocessed_img
-                    })
-                except Exception as e:
-                    logger.warning(f"Failed to apply preprocessing pipeline '{pipeline_name}': {e}")
-                    continue
+            # Try multiple preprocessing strategies for better text detection
+            preprocessing_strategies = [
+                {'name': 'original', 'image': image},
+                {'name': 'grayscale', 'image': cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)},
+                {'name': 'enhanced', 'image': self._enhance_image_for_ocr(image)},
+                {'name': 'high_contrast', 'image': self._apply_high_contrast(image)}
+            ]
             
             best_result = None
             best_score = 0
-            strategy_results = []
             
             for strategy in preprocessing_strategies:
                 try:
-                    # Use optimized EasyOCR parameters for better detection
+                    # Use lower confidence threshold for ID cards
                     results = self.easyocr_reader.readtext(
                         strategy['image'], 
                         paragraph=False,
-                        width_ths=0.3,    # Lower width threshold for better text detection
-                        height_ths=0.3,   # Lower height threshold
-                        mag_ratio=1.8,    # Higher magnification for small text
-                        slope_ths=0.3,    # Allow more slope tolerance
-                        ycenter_ths=0.7,  # Y-center threshold for line detection
-                        low_text=0.2      # Lower text confidence threshold
+                        width_ths=0.5,  # Lower width threshold
+                        height_ths=0.5, # Lower height threshold
+                        mag_ratio=1.5    # Increase magnification
                     )
                     
-                    # Process results with adaptive confidence threshold
+                    # Process results with lower confidence threshold
                     extracted_data = self._process_easyocr_results(
                         results, 
-                        confidence_threshold=0.2,  # Very low threshold for difficult text
+                        confidence_threshold=0.3,  # Lower threshold for ID cards
                         **kwargs
                     )
                     
-                    # Calculate comprehensive score
+                    # Score based on text length and confidence
                     text_length = len(extracted_data.get('text', ''))
                     avg_confidence = extracted_data.get('confidence', 0)
-                    word_count = len(extracted_data.get('text', '').split())
-                    
-                    # Weighted scoring: prioritize text length and word count
-                    score = (text_length * 0.4 + 
-                            avg_confidence * 0.3 + 
-                            word_count * 0.3)
-                    
-                    strategy_result = {
-                        'strategy': strategy['name'],
-                        'text_length': text_length,
-                        'confidence': avg_confidence,
-                        'word_count': word_count,
-                        'score': score,
-                        'text_preview': extracted_data.get('text', '')[:50] + ('...' if len(extracted_data.get('text', '')) > 50 else '')
-                    }
-                    strategy_results.append(strategy_result)
+                    score = text_length * 0.7 + avg_confidence * 0.3
                     
                     if score > best_score:
                         best_score = score
                         best_result = extracted_data
                         best_result['preprocessing_strategy'] = strategy['name']
-                        best_result['strategy_score'] = score
                     
-                    logger.info(f"EasyOCR strategy '{strategy['name']}': {text_length} chars, {word_count} words, conf: {avg_confidence:.3f}, score: {score:.3f}")
+                    logger.info(f"EasyOCR strategy '{strategy['name']}': {text_length} chars, conf: {avg_confidence:.3f}, score: {score:.3f}")
                     
                 except Exception as e:
                     logger.warning(f"EasyOCR strategy '{strategy['name']}' failed: {e}")
                     continue
             
             if best_result is None:
-                return {'error': 'All EasyOCR preprocessing strategies failed', 'text': '', 'confidence': 0.0}
+                return {'error': 'All EasyOCR strategies failed', 'text': '', 'confidence': 0.0}
             
             processing_time = time.time() - start_time
             best_result['processing_time'] = processing_time
             best_result['engine'] = 'EasyOCR'
-            best_result['strategy_results'] = strategy_results  # Include all strategy results for debugging
             
-            logger.info(f"EasyOCR processing completed in {processing_time:.2f}s using '{best_result.get('preprocessing_strategy', 'unknown')}' strategy with score {best_result.get('strategy_score', 0):.3f}")
+            logger.info(f"EasyOCR processing completed in {processing_time:.2f}s using '{best_result.get('preprocessing_strategy', 'unknown')}' strategy")
             return best_result
             
         except Exception as e:
