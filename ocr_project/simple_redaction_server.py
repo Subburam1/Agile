@@ -8,6 +8,7 @@ from pathlib import Path
 import base64
 import os
 from PIL import Image, ImageFilter
+from PIL.ExifTags import TAGS
 import io
 import re
 import pytesseract
@@ -42,12 +43,180 @@ def login_required(f):
     return decorated_function
 
 
-def detect_document_type(text, image_path=None):
+# ===== METADATA EXTRACTION =====
+def extract_file_metadata(image, filename=None):
     """
-    Hybrid ML-based document type detection.
-    Combines visual features + OCR patterns for high accuracy.
+    Extract comprehensive metadata from uploaded files for enhanced detection.
+    Returns metadata dict with file properties, EXIF data, and image characteristics.
+    """
+    metadata = {
+        'filename': filename,
+        'file_size_kb': 0,
+        'dimensions': {'width': 0, 'height': 0},
+        'aspect_ratio': 1.0,
+        'format': 'Unknown',
+        'mode': 'Unknown',
+        'dpi': (0, 0),
+        'exif': {},
+        'creation_date': None,
+        'camera_info': {},
+        'color_depth': 0,
+        'has_transparency': False,
+        'document_hints': []
+    }
+    
+    try:
+        # Basic image properties
+        if image:
+            width, height = image.size
+            metadata['dimensions'] = {'width': width, 'height': height}
+            metadata['aspect_ratio'] = round(width / height, 2) if height > 0 else 1.0
+            metadata['format'] = image.format or 'Unknown'
+            metadata['mode'] = image.mode
+            metadata['has_transparency'] = image.mode in ('RGBA', 'LA', 'P')
+            
+            # DPI information (important for scan quality)
+            dpi = image.info.get('dpi', (0, 0))
+            metadata['dpi'] = dpi if isinstance(dpi, tuple) else (dpi, dpi)
+            
+            # Color depth
+            if image.mode == 'RGB':
+                metadata['color_depth'] = 24
+            elif image.mode == 'RGBA':
+                metadata['color_depth'] = 32
+            elif image.mode == 'L':
+                metadata['color_depth'] = 8
+            elif image.mode == '1':
+                metadata['color_depth'] = 1
+            
+            # Extract EXIF data
+            try:
+                exif_data = image._getexif()
+                if exif_data:
+                    for tag_id, value in exif_data.items():
+                        tag = TAGS.get(tag_id, tag_id)
+                        
+                        # Store specific useful tags
+                        if tag in ['Make', 'Model', 'Software', 'DateTime', 'DateTimeOriginal', 
+                                   'Orientation', 'XResolution', 'YResolution', 'ResolutionUnit',
+                                   'ExifImageWidth', 'ExifImageHeight', 'ColorSpace']:
+                            try:
+                                metadata['exif'][tag] = str(value) if not isinstance(value, (str, int, float)) else value
+                            except:
+                                pass
+                    
+                    # Extract camera info
+                    if 'Make' in metadata['exif']:
+                        metadata['camera_info']['make'] = metadata['exif']['Make']
+                    if 'Model' in metadata['exif']:
+                        metadata['camera_info']['model'] = metadata['exif']['Model']
+                    
+                    # Extract creation date
+                    for date_field in ['DateTimeOriginal', 'DateTime']:
+                        if date_field in metadata['exif']:
+                            metadata['creation_date'] = metadata['exif'][date_field]
+                            break
+            except (AttributeError, KeyError, TypeError):
+                pass
+            
+            # Document type hints based on metadata
+            
+            # Hint 1: Aspect ratio (ID cards are typically 1.5-1.7)
+            if 1.5 <= metadata['aspect_ratio'] <= 1.7:
+                metadata['document_hints'].append('id_card_aspect_ratio')
+            
+            # Hint 2: Standard document sizes
+            if width == 3508 and height == 2480:  # A4 at 300 DPI landscape
+                metadata['document_hints'].append('a4_landscape_300dpi')
+            elif width == 2480 and height == 3508:  # A4 at 300 DPI portrait
+                metadata['document_hints'].append('a4_portrait_300dpi')
+            elif width == 1240 and height == 1754:  # A4 at 150 DPI portrait
+                metadata['document_hints'].append('a4_portrait_150dpi')
+            
+            # Hint 3: Scan quality (high DPI suggests scanned document)
+            if metadata['dpi'][0] >= 300:
+                metadata['document_hints'].append('high_quality_scan')
+            elif 150 <= metadata['dpi'][0] < 300:
+                metadata['document_hints'].append('medium_quality_scan')
+            elif metadata['dpi'][0] > 0 and metadata['dpi'][0] < 150:
+                metadata['document_hints'].append('low_quality_scan')
+            
+            # Hint 4: Photo vs scan (camera info suggests photo)
+            if metadata['camera_info']:
+                metadata['document_hints'].append('camera_photo')
+            elif metadata['exif'].get('Software'):
+                software = str(metadata['exif']['Software']).lower()
+                if 'scanner' in software or 'scan' in software:
+                    metadata['document_hints'].append('scanned_document')
+                elif 'adobe' in software or 'photoshop' in software:
+                    metadata['document_hints'].append('edited_document')
+            
+            # Hint 5: Resolution hints
+            if width >= 2000 or height >= 2000:
+                metadata['document_hints'].append('high_resolution')
+            elif width < 800 and height < 800:
+                metadata['document_hints'].append('low_resolution')
+            
+            # Hint 6: Color mode hints
+            if metadata['mode'] == 'L':
+                metadata['document_hints'].append('grayscale_document')
+            elif metadata['mode'] == '1':
+                metadata['document_hints'].append('binary_document')
+            
+    except Exception as e:
+        print(f"Metadata extraction error: {e}")
+    
+    return metadata
+
+
+def detect_document_type(text, image_path=None, metadata=None):
+    """
+    Enhanced ML-based document type detection.
+    Combines visual features + OCR patterns + metadata for high accuracy.
     """
     text_lower = text.lower()
+    text_normalized = ' '.join(text.split())  # Normalize whitespace
+    
+    # Initialize metadata-based scores
+    metadata_scores = {}
+    if metadata:
+        # Use metadata hints to boost document type scores
+        hints = metadata.get('document_hints', [])
+        aspect_ratio = metadata.get('aspect_ratio', 1.0)
+        dpi = metadata.get('dpi', (0, 0))[0]
+        
+        # ID card aspect ratio boost
+        if 'id_card_aspect_ratio' in hints:
+            metadata_scores['Aadhaar Card'] = metadata_scores.get('Aadhaar Card', 0) + 0.2
+            metadata_scores['PAN Card'] = metadata_scores.get('PAN Card', 0) + 0.2
+            metadata_scores['Voter ID Card'] = metadata_scores.get('Voter ID Card', 0) + 0.2
+            metadata_scores['Driving License'] = metadata_scores.get('Driving License', 0) + 0.15
+        
+        # High quality scan suggests official documents
+        if 'high_quality_scan' in hints:
+            metadata_scores['Passport'] = metadata_scores.get('Passport', 0) + 0.15
+            metadata_scores['Community Certificate'] = metadata_scores.get('Community Certificate', 0) + 0.15
+            metadata_scores['Medical Report'] = metadata_scores.get('Medical Report', 0) + 0.1
+            metadata_scores['Marksheet'] = metadata_scores.get('Marksheet', 0) + 0.1
+        
+        # A4 size suggests certificates/reports
+        if 'a4_portrait_300dpi' in hints or 'a4_portrait_150dpi' in hints:
+            metadata_scores['Community Certificate'] = metadata_scores.get('Community Certificate', 0) + 0.2
+            metadata_scores['Medical Report'] = metadata_scores.get('Medical Report', 0) + 0.15
+            metadata_scores['Marksheet'] = metadata_scores.get('Marksheet', 0) + 0.15
+            metadata_scores['Bank Statement'] = metadata_scores.get('Bank Statement', 0) + 0.1
+        
+        # Camera photo suggests ID cards (people photo their cards)
+        if 'camera_photo' in hints:
+            metadata_scores['Aadhaar Card'] = metadata_scores.get('Aadhaar Card', 0) + 0.1
+            metadata_scores['PAN Card'] = metadata_scores.get('PAN Card', 0) + 0.1
+            metadata_scores['Voter ID Card'] = metadata_scores.get('Voter ID Card', 0) + 0.1
+        
+        # Scanned document suggests certificates/official docs
+        if 'scanned_document' in hints:
+            metadata_scores['Community Certificate'] = metadata_scores.get('Community Certificate', 0) + 0.15
+            metadata_scores['Passport'] = metadata_scores.get('Passport', 0) + 0.1
+            metadata_scores['Medical Report'] = metadata_scores.get('Medical Report', 0) + 0.1
     
     # Visual feature analysis (if image provided)
     visual_scores = {}
@@ -93,136 +262,255 @@ def detect_document_type(text, image_path=None):
                     if blue_ratio > 0.05 and has_seal:
                         visual_scores['Aadhaar Card'] = 0.3
                         visual_scores['PAN Card'] = 0.25
-                        visual_scores['Passport'] = 0.2
+                        visual_scores['Passport'] = 0.25
+                        visual_scores['Community Certificate'] = 0.2
                     
                     if aspect_ratio > 1.4 and aspect_ratio < 1.8:  # ID card ratio
                         visual_scores['Aadhaar Card'] = visual_scores.get('Aadhaar Card', 0) + 0.15
                         visual_scores['PAN Card'] = visual_scores.get('PAN Card', 0) + 0.15
                         visual_scores['Voter ID Card'] = visual_scores.get('Voter ID Card', 0) + 0.15
                     
-                    if text_density > 0.15:  # Dense text = marksheet/invoice
+                    if aspect_ratio > 1.2 and aspect_ratio < 1.5 and has_seal:  # Passport booklet page
+                        visual_scores['Passport'] = visual_scores.get('Passport', 0) + 0.2
+                    
+                    if text_density > 0.15:  # Dense text = marksheet/invoice/medical report
                         visual_scores['Marksheet'] = visual_scores.get('Marksheet', 0) + 0.2
                         visual_scores['Invoice'] = visual_scores.get('Invoice', 0) + 0.15
                         visual_scores['Bank Statement'] = visual_scores.get('Bank Statement', 0) + 0.15
+                        visual_scores['Medical Report'] = visual_scores.get('Medical Report', 0) + 0.15
                     
                     if edge_density > 0.08:  # Tables/grids
                         visual_scores['Marksheet'] = visual_scores.get('Marksheet', 0) + 0.2
-                        visual_scores.get('Invoice', 0) + 0.2
+                        visual_scores['Invoice'] = visual_scores.get('Invoice', 0) + 0.2
                 else:
                     print(f"Failed to load image: {image_path}")
         except ImportError:
             print("OpenCV not installed, skipping visual analysis")
         except Exception as e:
             print(f"Visual analysis failed: {e}")
-            import traceback
-            traceback.print_exc()
 
     
-    # Enhanced pattern-based detection with ML-like scoring
+    # Enhanced pattern-based detection with improved scoring
     patterns = {
         'Aadhaar Card': {
-            'must_have': [r'\b\d{4}\s?\d{4}\s?\d{4}\b'],  # 12-digit number
-            'strong': ['aadhaar', 'aadhar', 'uidai', 'government of india'],
-            'supporting': ['dob', 'gender', 'address', 'male', 'female'],
-            'base_score': 0.4
+            'must_have': [
+                r'\b\d{4}\s*\d{4}\s*\d{4}\b',  # 12-digit number with flexible spacing
+            ],
+            'strong': ['aadhaar', 'aadhar', 'uidai', 'unique identification', 'government of india', 'भारत सरकार'],
+            'supporting': ['dob', 'date of birth', 'yob', 'year of birth', 'gender', 'male', 'female', 'address', 'vid'],
+            'negative': ['pan', 'passport', 'license', 'voter'],  # Keywords that indicate it's NOT this type
+            'base_score': 0.5,
+            'must_have_boost': 0.3  # Extra points if must_have pattern found
         },
         'PAN Card': {
-            'must_have': [r'\b[A-Z]{5}\d{4}[A-Z]\b'],  # PAN format
-            'strong': ['permanent account', 'income tax', 'pan'],
-            'supporting': ['father', 'signature'],
-            'base_score': 0.5
+            'must_have': [
+                r'\b[A-Z]{5}\d{4}[A-Z]\b',  # PAN format: ABCDE1234F
+            ],
+            'strong': ['permanent account', 'income tax', 'pan card', 'पैन कार्ड', 'income tax department'],
+            'supporting': ['father', 'signature', 'date of birth'],
+            'negative': ['aadhaar', 'passport', 'license', 'voter'],
+            'base_score': 0.6,
+            'must_have_boost': 0.3
         },
         'Passport': {
-            'must_have': [r'\b[A-Z]\d{7}\b'],  # Passport number
-            'strong': ['passport', 'republic of india', 'nationality'],
-            'supporting': ['given name', 'surname', 'place of birth', 'date of issue'],
-            'base_score': 0.5
+            'must_have': [
+                r'\b[A-Z]\d{7}\b',  # Passport number format
+                r'(?i)passport',
+                r'(?i)(republic\s*of\s*india|government\s*of\s*india)'
+            ],
+            'strong': ['passport', 'nationality', 'place of issue', 'date of issue', 'date of expiry', 
+                      'republic of india', 'government of india', 'ministry of external affairs', 
+                      'passport no', 'type', 'nationality indian'],
+            'supporting': ['given name', 'surname', 'place of birth', 'indian', 'holder', 'sex', 
+                          'date of birth', 'country code ind', 'p<ind', 'issued at'],
+            'negative': ['aadhaar', 'pan', 'license', 'voter', 'college', 'student'],
+            'base_score': 0.55,
+            'must_have_boost': 0.3
         },
         'Voter ID Card': {
-            'must_have': [r'\b[A-Z]{3}\d{7}\b'],  # Voter ID format
-            'strong': ['election commission', 'electoral', 'voter'],
-            'supporting': ['assembly', 'part no', 'serial'],
-            'base_score': 0.4
+            'must_have': [
+                r'\b[A-Z]{3}\d{7}\b',  # Voter ID format
+                r'election\s*commission',
+                r'electoral\s*photo'
+            ],
+            'strong': ['election commission', 'electoral', 'voter', 'elector', 'electors photo identity card'],
+            'supporting': ['assembly', 'part no', 'serial', 'constituency'],
+            'negative': ['aadhaar', 'pan', 'passport', 'license'],
+            'base_score': 0.5,
+            'must_have_boost': 0.3
         },
         'Driving License': {
-            'must_have': [r'(?i)(driving|dl|license|licence)'],
-            'strong': ['driving licence', 'transport', 'vehicle'],
-            'supporting': ['validity', 'blood group', 'authorized'],
-            'base_score': 0.3
+            'must_have': [
+                r'(?i)driving\s*licen[cs]e',
+                r'(?i)transport.*department',
+                r'(?i)motor\s*vehicles?'
+            ],
+            'strong': ['driving licence', 'driving license', 'transport', 'motor vehicle', 'dl no'],
+            'supporting': ['validity', 'blood group', 'authorized', 'vehicle class', 'date of issue'],
+            'negative': ['aadhaar', 'pan', 'passport', 'voter'],
+            'base_score': 0.4,
+            'must_have_boost': 0.35
         },
         'Marksheet': {
-            'must_have': [r'(?i)(marks?|grade|cgpa|sgpa|subject)'],
-            'strong': ['marks obtained', 'university', 'examination'],
-            'supporting': ['semester', 'roll', 'theory', 'practical', 'total'],
-            'base_score': 0.3
+            'must_have': [
+                r'(?i)(marks?\s*obtained|total\s*marks)',
+                r'(?i)(grade|cgpa|sgpa|percentage)',
+                r'(?i)(semester|examination|university)'
+            ],
+            'strong': ['marks obtained', 'university', 'examination', 'marksheet', 'grade sheet', 'transcript', 'result'],
+            'supporting': ['semester', 'roll', 'theory', 'practical', 'total', 'subject', 'course'],
+            'negative': ['invoice', 'receipt', 'payment', 'bill'],
+            'base_score': 0.4,
+            'must_have_boost': 0.35
         },
         'College ID Card': {
-            'must_have': [r'(?i)(student|enrollment|college|university)'],
-            'strong': ['student id', 'enrollment', 'roll no'],
-            'supporting': ['department', 'course', 'year', 'validity'],
-            'base_score': 0.25
+            'must_have': [
+                r'(?i)(student\s*id|enrollment|roll\s*no)',
+                r'(?i)(college|university|institute)'
+            ],
+            'strong': ['student', 'enrollment', 'college', 'university', 'institute', 'student id'],
+            'supporting': ['department', 'course', 'year', 'validity', 'session'],
+            'negative': ['invoice', 'receipt', 'payment', 'marks'],
+            'base_score': 0.35,
+            'must_have_boost': 0.4
         },
         'Bank Passbook': {
-            'must_have': [r'(?i)(account|ifsc|bank)'],
-            'strong': ['passbook', 'account holder', 'ifsc'],
-            'supporting': ['branch', 'savings', 'micr', 'nominee'],
-            'base_score': 0.3
+            'must_have': [
+                r'(?i)(passbook|savings\s*account)',
+                r'(?i)(account\s*holder|account\s*no)',
+                r'(?i)ifsc'
+            ],
+            'strong': ['passbook', 'account holder', 'ifsc', 'savings', 'bank passbook'],
+            'supporting': ['branch', 'micr', 'nominee', 'account number'],
+            'negative': ['statement', 'transaction', 'invoice'],
+            'base_score': 0.4,
+            'must_have_boost': 0.35
         },
         'Bank Statement': {
-            'must_have': [r'(?i)(statement|transaction|balance)'],
-            'strong': ['bank statement', 'opening balance', 'closing balance'],
-            'supporting': ['debit', 'credit', 'withdrawal', 'deposit'],
-            'base_score': 0.3
+            'must_have': [
+                r'(?i)(bank\s*statement|statement\s*of\s*account)',
+                r'(?i)(opening\s*balance|closing\s*balance)',
+                r'(?i)(transaction|debit|credit)'
+            ],
+            'strong': ['bank statement', 'statement of account', 'opening balance', 'closing balance', 'transaction'],
+            'supporting': ['debit', 'credit', 'withdrawal', 'deposit', 'balance'],
+            'negative': ['passbook', 'invoice', 'receipt'],
+            'base_score': 0.4,
+            'must_have_boost': 0.35
         },
         'Invoice': {
-            'must_have': [r'(?i)(invoice|bill|gst|tax)'],
-            'strong': ['invoice no', 'invoice date', 'gst'],
-            'supporting': ['bill to', 'subtotal', 'total', 'qty', 'amount'],
-            'base_score': 0.35
+            'must_have': [
+                r'(?i)(invoice|tax\s*invoice)',
+                r'(?i)(gst|gstin)',
+                r'(?i)(invoice\s*(no|number|date))'
+            ],
+            'strong': ['invoice', 'tax invoice', 'gst', 'gstin', 'invoice no', 'invoice date'],
+            'supporting': ['bill to', 'subtotal', 'total', 'qty', 'amount', 'taxable', 'igst', 'cgst', 'sgst'],
+            'negative': ['receipt', 'salary', 'statement'],
+            'base_score': 0.45,
+            'must_have_boost': 0.3
         },
         'Bill/Receipt': {
-            'must_have': [r'(?i)(receipt|bill|payment)'],
-            'strong': ['receipt no', 'payment received'],
-            'supporting': ['amount', 'cash', 'card', 'date'],
-            'base_score': 0.3
+            'must_have': [
+                r'(?i)(receipt|bill\s*no)',
+                r'(?i)payment\s*(received|made)',
+                r'(?i)(cash|card|upi)'
+            ],
+            'strong': ['receipt', 'bill no', 'payment received', 'payment made'],
+            'supporting': ['amount', 'cash', 'card', 'date', 'total paid'],
+            'negative': ['invoice', 'salary', 'gst'],
+            'base_score': 0.35,
+            'must_have_boost': 0.35
         },
         'Salary Slip': {
-            'must_have': [r'(?i)(salary|pay|earnings|deductions)'],
-            'strong': ['salary slip', 'pay slip', 'net pay'],
-            'supporting': ['basic salary', 'gross', 'pf', 'esi', 'tds'],
-            'base_score': 0.35
+            'must_have': [
+                r'(?i)(salary|pay\s*slip|payslip)',
+                r'(?i)(earnings|deductions)',
+                r'(?i)(basic\s*salary|net\s*pay|gross\s*pay)'
+            ],
+            'strong': ['salary slip', 'pay slip', 'payslip', 'net pay', 'gross pay', 'earnings', 'deductions'],
+            'supporting': ['basic salary', 'pf', 'esi', 'tds', 'hra', 'allowance'],
+            'negative': ['invoice', 'receipt', 'statement'],
+            'base_score': 0.45,
+            'must_have_boost': 0.3
+        },
+        'Community Certificate': {
+            'must_have': [
+                r'(?i)(community\s*certificate)',
+                r'(?i)(caste\s*certificate)',
+                r'(?i)(backward\s*class|scheduled\s*caste|scheduled\s*tribe|obc|sc|st)'
+            ],
+            'strong': ['community certificate', 'caste certificate', 'backward class', 'scheduled caste', 'scheduled tribe', 
+                      'obc', 'sc', 'st', 'tahsildar', 'revenue officer', 'collector', 'district magistrate', 'mamlatdar'],
+            'supporting': ['caste', 'community', 'reservation', 'belongs to', 'resident of', 'category', 'seal', 'signature', 
+                          'certificate no', 'issued by', 'government'],
+            'negative': ['medical', 'fitness', 'health', 'doctor', 'hospital', 'passport', 'marks'],
+            'base_score': 0.5,
+            'must_have_boost': 0.35
+        },
+        'Medical Report': {
+            'must_have': [
+                r'(?i)(medical\s*(report|certificate|examination))',
+                r'(?i)(patient|diagnosis|prescription)',
+                r'(?i)(doctor|physician|hospital|clinic)'
+            ],
+            'strong': ['medical report', 'medical certificate', 'medical examination', 'fitness certificate', 
+                      'patient', 'diagnosis', 'prescription', 'doctor', 'physician', 'hospital', 'clinic', 
+                      'health', 'treatment', 'consultation'],
+            'supporting': ['blood pressure', 'temperature', 'pulse', 'weight', 'height', 'symptoms', 'medicines', 
+                          'advised', 'examination', 'findings', 'medical history', 'dr.', 'mbbs', 'md', 'registration no'],
+            'negative': ['community', 'caste', 'invoice', 'passport', 'license'],
+            'base_score': 0.45,
+            'must_have_boost': 0.35
         }
     }
     
-    # ML-like scoring algorithm
+    # Enhanced ML-like scoring algorithm
     final_scores = {}
     
     for doc_type, config in patterns.items():
         score = 0.0
+        must_have_matches = 0
         
-        # Check must-have patterns (critical features)
-        must_have_match = False
+        # Check must-have patterns (critical features) - ANY one must match
+        must_have_found = False
         for pattern in config['must_have']:
             if re.search(pattern, text, re.IGNORECASE):
-                must_have_match = True
-                score += config['base_score']
-                break
+                must_have_found = True
+                must_have_matches += 1
         
-        if not must_have_match:
+        if not must_have_found:
             continue  # Skip if doesn't meet minimum requirements
+        
+        # Base score for matching must-have pattern
+        score += config['base_score']
+        
+        # Bonus for multiple must-have matches
+        if must_have_matches > 1:
+            score += config['must_have_boost'] * (must_have_matches - 1) * 0.5
         
         # Strong indicators (weighted heavily)
         strong_matches = sum(1 for keyword in config['strong'] if keyword in text_lower)
-        score += strong_matches * 0.15
+        score += strong_matches * 0.12
         
         # Supporting indicators (lighter weight)
         support_matches = sum(1 for keyword in config['supporting'] if keyword in text_lower)
-        score += support_matches * 0.05
+        score += support_matches * 0.04
+        
+        # Negative keywords (penalize if found)
+        negative_matches = sum(1 for keyword in config.get('negative', []) if keyword in text_lower)
+        score -= negative_matches * 0.15
         
         # Add visual feature score
         score += visual_scores.get(doc_type, 0)
         
-        # Normalize score
+        # Add metadata-based score
+        score += metadata_scores.get(doc_type, 0)
+        
+        # Ensure score doesn't go negative
+        score = max(0, score)
+        
+        # Normalize score (cap at 1.0)
         final_scores[doc_type] = min(score, 1.0)
     
     # Find best match
@@ -230,8 +518,8 @@ def detect_document_type(text, image_path=None):
         best_type = max(final_scores, key=final_scores.get)
         confidence = final_scores[best_type]
         
-        # Very low threshold - if we matched the pattern, we're confident
-        if confidence >= 0.25:
+        # Lower threshold for better detection
+        if confidence >= 0.3:
             return {
                 'document_type': best_type,
                 'confidence': round(confidence, 2),
@@ -248,14 +536,30 @@ def detect_document_type(text, image_path=None):
 
 
 
-def detect_sensitive_fields(text, image_path=None):
+def detect_sensitive_fields(text, image_path=None, metadata=None):
     """
     Comprehensive field detection with ACCURATE coordinates.
-
+    Uses metadata to improve detection accuracy and OCR optimization.
+    
     Detects: Text fields, MRZ, QR codes, barcodes, photos, signatures
     """
     detected_fields = []
     field_id = 0
+    
+    # Use metadata to optimize OCR settings
+    ocr_config = '--psm 3'  # Default: Fully automatic page segmentation
+    if metadata:
+        # High DPI images can use more precise detection
+        if metadata.get('dpi', (0, 0))[0] >= 300:
+            ocr_config = '--psm 3 --oem 3'  # Use LSTM OCR engine for better accuracy
+        
+        # Low resolution images need more lenient settings
+        elif metadata.get('dpi', (0, 0))[0] < 150:
+            ocr_config = '--psm 6'  # Assume single uniform block of text
+        
+        # ID card aspect ratio suggests structured layout
+        if 'id_card_aspect_ratio' in metadata.get('document_hints', []):
+            ocr_config = '--psm 6'  # Single uniform block
     
     # Get OCR data with bounding boxes if image provided
     ocr_data = None
@@ -271,7 +575,8 @@ def detect_sensitive_fields(text, image_path=None):
             image = Image.open(image_path)
             cv_image = cv2.imread(image_path)
             
-            ocr_df = pytesseract.image_to_data(image, output_type=pytesseract.Output.DATAFRAME)
+            # Use optimized OCR config based on metadata
+            ocr_df = pytesseract.image_to_data(image, output_type=pytesseract.Output.DATAFRAME, config=ocr_config)
             ocr_data = ocr_df[ocr_df['text'].notna() & (ocr_df['text'].str.strip() != '')]
         except Exception as e:
             print(f"OCR bbox extraction failed: {e}")
@@ -601,6 +906,7 @@ def history_page():
 def process_for_redaction():
     """
     Process uploaded document with OCR and field detection.
+    Extracts metadata and uses it for enhanced detection accuracy.
     Detects sensitive Indian document fields automatically with ACCURATE coordinates.
     """
     temp_path = None
@@ -620,6 +926,10 @@ def process_for_redaction():
         image_bytes = file.read()
         image = Image.open(io.BytesIO(image_bytes))
         
+        # Extract comprehensive metadata
+        metadata = extract_file_metadata(image, filename=file.filename)
+        metadata['file_size_kb'] = round(len(image_bytes) / 1024, 2)
+        
         # Save to temp file for OCR bbox extraction
         image.save(temp_path)
         
@@ -634,11 +944,11 @@ def process_for_redaction():
             extracted_text = ""
             print(f"OCR Warning: {ocr_error}")
         
-        # Detect sensitive fields WITH ACCURATE COORDINATES
-        detected_fields = detect_sensitive_fields(extracted_text, image_path=temp_path) if extracted_text else []
+        # Detect sensitive fields WITH ACCURATE COORDINATES and metadata optimization
+        detected_fields = detect_sensitive_fields(extracted_text, image_path=temp_path, metadata=metadata) if extracted_text else []
         
-        # Detect document type
-        document_info = detect_document_type(extracted_text) if extracted_text else {
+        # Detect document type using metadata
+        document_info = detect_document_type(extracted_text, image_path=temp_path, metadata=metadata) if extracted_text else {
             'document_type': 'Unknown Document',
             'confidence': 0.0,
             'all_scores': {}
@@ -653,7 +963,7 @@ def process_for_redaction():
         sensitive_count = sum(1 for f in detected_fields if f['is_sensitive'])
         auto_selected_count = sum(1 for f in detected_fields if f['auto_selected'])
         
-        # Save to history (exclude large image data) with user_id
+        # Save to history with metadata (exclude large image data) with user_id
         user_id = session.get('user_id')
         save_to_history({
             'filename': file.filename,
@@ -662,10 +972,18 @@ def process_for_redaction():
             'total_fields': len(detected_fields),
             'sensitive_fields': sensitive_count,
             'status': 'Processed',
-            'processing_time': 0  # Placeholder
+            'processing_time': 0,  # Placeholder
+            'metadata': {
+                'file_size_kb': metadata['file_size_kb'],
+                'dimensions': metadata['dimensions'],
+                'aspect_ratio': metadata['aspect_ratio'],
+                'format': metadata['format'],
+                'dpi': metadata['dpi'],
+                'document_hints': metadata['document_hints']
+            }
         }, user_id)
         
-        # Return response with detected fields and document type
+        # Return response with detected fields, document type, and metadata
         return jsonify({
             'success': True,
             'filename': file.filename,
@@ -686,11 +1004,26 @@ def process_for_redaction():
                 'text_length': len(extracted_text),
                 'word_count': len(extracted_text.split())
             },
+            'file_metadata': {
+                'file_size_kb': metadata['file_size_kb'],
+                'dimensions': metadata['dimensions'],
+                'aspect_ratio': metadata['aspect_ratio'],
+                'format': metadata['format'],
+                'mode': metadata['mode'],
+                'dpi': metadata['dpi'],
+                'color_depth': metadata['color_depth'],
+                'has_transparency': metadata['has_transparency'],
+                'document_hints': metadata['document_hints'],
+                'exif': metadata['exif'],
+                'camera_info': metadata['camera_info'],
+                'creation_date': metadata['creation_date']
+            },
             'processing_metadata': {
                 'ocr_method': 'tesseract_with_bbox',
                 'ocr_confidence': 0.8,
                 'processing_time': 0,
-                'note': 'Using ACCURATE OCR bounding boxes for field coordinates'
+                'metadata_enhanced': True,
+                'note': 'Using metadata-enhanced detection with ACCURATE OCR bounding boxes'
             }
         })
     
@@ -709,8 +1042,11 @@ def process_for_redaction():
 @app.route('/api/blur-and-export', methods=['POST'])
 @login_required
 def blur_and_export_image():
-    """Apply blur to selected fields and export the modified image."""
+    """Apply various redaction styles, watermark, and export in different formats."""
     try:
+        import cv2
+        import numpy as np
+        
         data = request.get_json()
         
         if not data or 'image_data' not in data:
@@ -719,7 +1055,12 @@ def blur_and_export_image():
         # Get parameters
         image_data_url = data['image_data']
         selected_fields = data.get('selected_fields', [])
+        redaction_style = data.get('redaction_style', 'blur')
         blur_strength = int(data.get('blur_strength', 15))
+        pixel_size = int(data.get('pixel_size', 10))
+        watermark_config = data.get('watermark', {})
+        export_format = data.get('export_format', 'png')
+        jpeg_quality = int(data.get('jpeg_quality', 85))
         
         # Extract base64 image data
         if ',' in image_data_url:
@@ -731,7 +1072,7 @@ def blur_and_export_image():
         image_bytes = base64.b64decode(image_data)
         image = Image.open(io.BytesIO(image_bytes))
         
-        # Apply blur to each selected field
+        # Apply redaction to each selected field
         for field_coords in selected_fields:
             # Convert percentage coordinates to pixels
             x_percent = field_coords.get('x', 0)
@@ -753,23 +1094,118 @@ def blur_and_export_image():
             height = max(0, min(height, img_height - y))
             
             if width > 0 and height > 0:
-                # Crop the region to blur
                 region = image.crop((x, y, x + width, y + height))
                 
-                # Apply Gaussian blur
-                blurred_region = region.filter(ImageFilter.GaussianBlur(radius=blur_strength))
-                
-                # Paste back
-                image.paste(blurred_region, (x, y))
+                # Apply redaction style
+                if redaction_style == 'blur':
+                    # Gaussian blur
+                    region = region.filter(ImageFilter.GaussianBlur(radius=blur_strength))
+                    image.paste(region, (x, y))
+                    
+                elif redaction_style == 'pixelate':
+                    # Pixelation effect
+                    region_small = region.resize((width // pixel_size, height // pixel_size), Image.NEAREST)
+                    region_pixelated = region_small.resize((width, height), Image.NEAREST)
+                    image.paste(region_pixelated, (x, y))
+                    
+                elif redaction_style == 'blackbox':
+                    # Black rectangle
+                    from PIL import ImageDraw
+                    draw = ImageDraw.Draw(image)
+                    draw.rectangle([x, y, x + width, y + height], fill='black')
+                    
+                elif redaction_style == 'white':
+                    # White rectangle
+                    from PIL import ImageDraw
+                    draw = ImageDraw.Draw(image)
+                    draw.rectangle([x, y, x + width, y + height], fill='white')
         
-        # Convert back to base64
+        # Apply watermark if text provided
+        watermark_text = watermark_config.get('text', '').strip()
+        if watermark_text:
+            from PIL import ImageDraw, ImageFont
+            
+            draw = ImageDraw.Draw(image, 'RGBA')
+            font_size = watermark_config.get('font_size', 36)
+            opacity = watermark_config.get('opacity', 50)
+            position = watermark_config.get('position', 'center')
+            
+            # Try to use a better font, fall back to default
+            try:
+                font = ImageFont.truetype("arial.ttf", font_size)
+            except:
+                font = ImageFont.load_default()
+            
+            # Calculate text size using textbbox
+            bbox = draw.textbbox((0, 0), watermark_text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            
+            # Calculate position
+            img_width, img_height = image.size
+            if position == 'center':
+                text_x = (img_width - text_width) // 2
+                text_y = (img_height - text_height) // 2
+            elif position == 'top-left':
+                text_x = 20
+                text_y = 20
+            elif position == 'top-right':
+                text_x = img_width - text_width - 20
+                text_y = 20
+            elif position == 'bottom-left':
+                text_x = 20
+                text_y = img_height - text_height - 20
+            elif position == 'bottom-right':
+                text_x = img_width - text_width - 20
+                text_y = img_height - text_height - 20
+            else:
+                text_x = (img_width - text_width) // 2
+                text_y = (img_height - text_height) // 2
+            
+            # Draw watermark with opacity
+            alpha = int(255 * (opacity / 100))
+            draw.text((text_x, text_y), watermark_text, fill=(255, 255, 255, alpha), font=font)
+        
+        # Export in requested format
         buffered = io.BytesIO()
-        image.save(buffered, format="PNG")
-        blurred_image_data = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        
+        if export_format == 'pdf':
+            # Convert to PDF
+            try:
+                import img2pdf
+                # First save image to bytes
+                img_bytes = io.BytesIO()
+                image.save(img_bytes, format="PNG")
+                img_bytes.seek(0)
+                # Convert to PDF
+                pdf_bytes = img2pdf.convert(img_bytes.getvalue())
+                encoded_data = base64.b64encode(pdf_bytes).decode('utf-8')
+                mime_type = 'application/pdf'
+            except (ImportError, Exception) as e:
+                # Fallback: use PIL to save as PNG then return
+                print(f"PDF conversion failed: {e}, falling back to PNG")
+                image.save(buffered, format="PNG")
+                encoded_data = base64.b64encode(buffered.getvalue()).decode('utf-8')
+                mime_type = 'image/png'
+        
+        elif export_format == 'jpeg':
+            # Convert to RGB (JPEG doesn't support transparency)
+            if image.mode in ('RGBA', 'LA', 'P'):
+                rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+                rgb_image.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
+                image = rgb_image
+            image.save(buffered, format="JPEG", quality=jpeg_quality)
+            encoded_data = base64.b64encode(buffered.getvalue()).decode('utf-8')
+            mime_type = 'image/jpeg'
+        
+        else:  # PNG (default)
+            image.save(buffered, format="PNG")
+            encoded_data = base64.b64encode(buffered.getvalue()).decode('utf-8')
+            mime_type = 'image/png'
         
         return jsonify({
             'success': True,
-            'blurred_image': f'data:image/png;base64,{blurred_image_data}'
+            'blurred_image': f'data:{mime_type};base64,{encoded_data}'
         })
     
     except Exception as e:
@@ -932,6 +1368,284 @@ def change_user_password():
     except Exception as e:
         print(f"Password change error: {e}")
         return jsonify({'success': False, 'message': 'Error changing password'}), 500
+
+
+# ===== TEMPLATE MANAGEMENT ROUTES =====
+
+@app.route('/api/templates/save', methods=['POST'])
+@login_required
+def save_template():
+    """Save a redaction template for the current user."""
+    try:
+        from bson.objectid import ObjectId
+        
+        user_id = session.get('user_id')
+        data = request.get_json()
+        
+        template_name = data.get('name', '').strip()
+        settings = data.get('settings', {})
+        
+        if not template_name:
+            return jsonify({'success': False, 'error': 'Template name is required'}), 400
+        
+        # Get MongoDB database
+        mongo_client = auth_db_mongo.get_mongo_client()
+        if not mongo_client:
+            return jsonify({'success': False, 'error': 'Database not connected'}), 503
+        
+        db = mongo_client['redaction_db']
+        templates_collection = db['templates']
+        
+        # Create template document
+        template_doc = {
+            'user_id': user_id,
+            'name': template_name,
+            'settings': settings,
+            'created_at': datetime.datetime.now(),
+            'updated_at': datetime.datetime.now()
+        }
+        
+        # Check if template with same name exists for this user
+        existing = templates_collection.find_one({'user_id': user_id, 'name': template_name})
+        
+        if existing:
+            # Update existing template
+            templates_collection.update_one(
+                {'_id': existing['_id']},
+                {'$set': {'settings': settings, 'updated_at': datetime.datetime.now()}}
+            )
+            return jsonify({'success': True, 'message': 'Template updated successfully'})
+        else:
+            # Insert new template
+            result = templates_collection.insert_one(template_doc)
+            return jsonify({'success': True, 'message': 'Template saved successfully', 'template_id': str(result.inserted_id)})
+            
+    except Exception as e:
+        print(f"Template save error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/templates/list', methods=['GET'])
+@login_required
+def list_templates():
+    """Get all templates for the current user."""
+    try:
+        user_id = session.get('user_id')
+        
+        # Get MongoDB database
+        mongo_client = auth_db_mongo.get_mongo_client()
+        if not mongo_client:
+            return jsonify({'success': False, 'error': 'Database not connected'}), 503
+        
+        db = mongo_client['redaction_db']
+        templates_collection = db['templates']
+        
+        # Find all templates for this user
+        templates = list(templates_collection.find({'user_id': user_id}))
+        
+        # Convert ObjectId to string
+        for template in templates:
+            template['_id'] = str(template['_id'])
+            template['created_at'] = template['created_at'].isoformat() if 'created_at' in template else None
+            template['updated_at'] = template['updated_at'].isoformat() if 'updated_at' in template else None
+        
+        return jsonify({'success': True, 'templates': templates})
+        
+    except Exception as e:
+        print(f"Template list error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/templates/get/<template_id>', methods=['GET'])
+@login_required
+def get_template(template_id):
+    """Get a specific template by ID."""
+    try:
+        from bson.objectid import ObjectId
+        
+        user_id = session.get('user_id')
+        
+        # Get MongoDB database
+        mongo_client = auth_db_mongo.get_mongo_client()
+        if not mongo_client:
+            return jsonify({'success': False, 'error': 'Database not connected'}), 503
+        
+        db = mongo_client['redaction_db']
+        templates_collection = db['templates']
+        
+        # Find template by ID and user_id (security check)
+        template = templates_collection.find_one({
+            '_id': ObjectId(template_id),
+            'user_id': user_id
+        })
+        
+        if not template:
+            return jsonify({'success': False, 'error': 'Template not found'}), 404
+        
+        # Convert ObjectId to string
+        template['_id'] = str(template['_id'])
+        template['created_at'] = template['created_at'].isoformat() if 'created_at' in template else None
+        template['updated_at'] = template['updated_at'].isoformat() if 'updated_at' in template else None
+        
+        return jsonify({'success': True, 'template': template})
+        
+    except Exception as e:
+        print(f"Template get error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/templates/delete/<template_id>', methods=['DELETE'])
+@login_required
+def delete_template(template_id):
+    """Delete a specific template."""
+    try:
+        from bson.objectid import ObjectId
+        
+        user_id = session.get('user_id')
+        
+        # Get MongoDB database
+        mongo_client = auth_db_mongo.get_mongo_client()
+        if not mongo_client:
+            return jsonify({'success': False, 'error': 'Database not connected'}), 503
+        
+        db = mongo_client['redaction_db']
+        templates_collection = db['templates']
+        
+        # Delete template (only if it belongs to the user)
+        result = templates_collection.delete_one({
+            '_id': ObjectId(template_id),
+            'user_id': user_id
+        })
+        
+        if result.deleted_count > 0:
+            return jsonify({'success': True, 'message': 'Template deleted successfully'})
+        else:
+            return jsonify({'success': False, 'error': 'Template not found'}), 404
+            
+    except Exception as e:
+        print(f"Template delete error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ===== ANALYTICS ROUTES =====
+
+@app.route('/analytics')
+@login_required
+def analytics_page():
+    """Analytics dashboard page."""
+    return render_template('analytics.html')
+
+
+@app.route('/api/analytics', methods=['GET'])
+@login_required
+def get_analytics():
+    """Get analytics data for the current user."""
+    try:
+        from collections import Counter
+        
+        user_id = session.get('user_id')
+        
+        # Get MongoDB database
+        mongo_client = auth_db_mongo.get_mongo_client()
+        if not mongo_client:
+            return jsonify({'success': False, 'error': 'Database not connected'}), 503
+        
+        db = mongo_client['redaction_db']
+        history_collection = db['processing_history']
+        
+        # Get all history for this user
+        all_records = list(history_collection.find({'user_id': user_id}).sort('timestamp', -1))
+        
+        # Calculate statistics
+        total_documents = len(all_records)
+        total_sensitive_fields = sum(record.get('sensitive_fields', 0) for record in all_records)
+        
+        # Document type distribution
+        doc_types = [record.get('document_type', 'Unknown') for record in all_records]
+        type_distribution = dict(Counter(doc_types).most_common(10))
+        
+        # Most common type
+        most_common = Counter(doc_types).most_common(1)
+        most_common_type = most_common[0][0] if most_common else 'N/A'
+        most_common_count = most_common[0][1] if most_common else 0
+        
+        # This month's documents
+        now = datetime.datetime.now()
+        month_start = datetime.datetime(now.year, now.month, 1)
+        this_month_count = len([r for r in all_records if r.get('timestamp', datetime.datetime.min) >= month_start])
+        
+        # Last 7 days trend
+        last_7_days = []
+        for i in range(6, -1, -1):
+            day = now - datetime.timedelta(days=i)
+            day_start = datetime.datetime(day.year, day.month, day.day)
+            day_end = day_start + datetime.timedelta(days=1)
+            count = len([r for r in all_records if day_start <= r.get('timestamp', datetime.datetime.min) < day_end])
+            last_7_days.append({
+                'date': day_start.isoformat(),
+                'count': count
+            })
+        
+        # Sensitive fields by category (simplified - count field types)
+        all_fields = []
+        for record in all_records:
+            fields = record.get('detected_fields', [])
+            if isinstance(fields, list):
+                for field in fields:
+                    if isinstance(field, dict) and field.get('is_sensitive'):
+                        all_fields.append(field.get('category', 'Unknown'))
+        
+        fields_by_category = dict(Counter(all_fields).most_common(10))
+        
+        # Monthly volume (last 6 months)
+        monthly_volume = []
+        for i in range(5, -1, -1):
+            if i == 0:
+                target_month = now.month
+                target_year = now.year
+            else:
+                target_date = now - datetime.timedelta(days=30 * i)
+                target_month = target_date.month
+                target_year = target_date.year
+            
+            month_count = len([r for r in all_records 
+                              if r.get('timestamp', datetime.datetime.min).month == target_month 
+                              and r.get('timestamp', datetime.datetime.min).year == target_year])
+            
+            month_name = datetime.datetime(target_year, target_month, 1).strftime('%b %Y')
+            monthly_volume.append({
+                'month': month_name,
+                'count': month_count
+            })
+        
+        # Recent activity (last 10 records)
+        recent_activity = []
+        for record in all_records[:10]:
+            recent_activity.append({
+                'filename': record.get('filename', 'Unknown'),
+                'document_type': record.get('document_type', 'Unknown'),
+                'total_fields': record.get('total_fields', 0),
+                'timestamp': record.get('timestamp', datetime.datetime.now()).isoformat()
+            })
+        
+        analytics = {
+            'totalDocuments': total_documents,
+            'totalSensitiveFields': total_sensitive_fields,
+            'mostCommonType': most_common_type,
+            'mostCommonTypeCount': most_common_count,
+            'thisMonth': this_month_count,
+            'documentTypeDistribution': type_distribution,
+            'last7Days': last_7_days,
+            'sensitiveFieldsByCategory': fields_by_category,
+            'monthlyVolume': monthly_volume,
+            'recentActivity': recent_activity
+        }
+        
+        return jsonify({'success': True, 'analytics': analytics})
+        
+    except Exception as e:
+        print(f"Analytics error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 if __name__ == '__main__':
