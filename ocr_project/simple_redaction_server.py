@@ -296,11 +296,11 @@ def detect_document_type(text, image_path=None, metadata=None):
             'must_have': [
                 r'\b\d{4}\s*\d{4}\s*\d{4}\b',  # 12-digit number with flexible spacing
             ],
-            'strong': ['aadhaar', 'aadhar', 'uidai', 'unique identification', 'government of india', 'भारत सरकार'],
-            'supporting': ['dob', 'date of birth', 'yob', 'year of birth', 'gender', 'male', 'female', 'address', 'vid'],
-            'negative': ['pan', 'passport', 'license', 'voter'],  # Keywords that indicate it's NOT this type
-            'base_score': 0.5,
-            'must_have_boost': 0.3  # Extra points if must_have pattern found
+            'strong': ['aadhaar', 'aadhar', 'uidai', 'unique identification', 'uid', 'unique identification authority', 'भारत सरकार'],
+            'supporting': ['dob', 'date of birth', 'yob', 'year of birth', 'gender', 'male', 'female', 'address', 'vid', 'enrolment', 'enrollment'],
+            'negative': ['pan', 'passport', 'license', 'voter', 'community', 'caste', 'certificate'],
+            'base_score': 0.65,
+            'must_have_boost': 0.35
         },
         'PAN Card': {
             'must_have': [
@@ -314,18 +314,16 @@ def detect_document_type(text, image_path=None, metadata=None):
         },
         'Passport': {
             'must_have': [
-                r'\b[A-Z]\d{7}\b',  # Passport number format
-                r'(?i)passport',
-                r'(?i)(republic\s*of\s*india|government\s*of\s*india)'
+                r'(?i)passport',  # Main identifier - just need the word passport
             ],
             'strong': ['passport', 'nationality', 'place of issue', 'date of issue', 'date of expiry', 
-                      'republic of india', 'government of india', 'ministry of external affairs', 
-                      'passport no', 'type', 'nationality indian'],
+                      'republic of india', 'ministry of external affairs', 
+                      'passport no', 'passport number', 'nationality indian', 'issued at', 'valid until'],
             'supporting': ['given name', 'surname', 'place of birth', 'indian', 'holder', 'sex', 
-                          'date of birth', 'country code ind', 'p<ind', 'issued at'],
-            'negative': ['aadhaar', 'pan', 'license', 'voter', 'college', 'student'],
-            'base_score': 0.55,
-            'must_have_boost': 0.3
+                          'date of birth', 'country code ind', 'p<ind', 'type p', r'\b[A-Z]\d{7}\b'],
+            'negative': ['aadhaar', 'pan', 'license', 'voter', 'college', 'student', 'marksheet', 'community'],
+            'base_score': 0.7,
+            'must_have_boost': 0.35
         },
         'Voter ID Card': {
             'must_have': [
@@ -438,15 +436,14 @@ def detect_document_type(text, image_path=None, metadata=None):
             'must_have': [
                 r'(?i)(community\s*certificate)',
                 r'(?i)(caste\s*certificate)',
-                r'(?i)(backward\s*class|scheduled\s*caste|scheduled\s*tribe|obc|sc|st)'
+                r'(?i)(backward\s*class|scheduled\s*caste|scheduled\s*tribe)'
             ],
             'strong': ['community certificate', 'caste certificate', 'backward class', 'scheduled caste', 'scheduled tribe', 
-                      'obc', 'sc', 'st', 'tahsildar', 'revenue officer', 'collector', 'district magistrate', 'mamlatdar'],
-            'supporting': ['caste', 'community', 'reservation', 'belongs to', 'resident of', 'category', 'seal', 'signature', 
-                          'certificate no', 'issued by', 'government'],
-            'negative': ['medical', 'fitness', 'health', 'doctor', 'hospital', 'passport', 'marks'],
-            'base_score': 0.5,
-            'must_have_boost': 0.35
+                      'obc', 'sc', 'st', 'tahsildar', 'revenue officer', 'collector', 'district magistrate', 'mamlatdar', 'creamy layer'],
+            'supporting': ['caste', 'community', 'reservation', 'belongs to', 'resident of', 'category', 'certificate no', 'issued by'],
+            'negative': ['medical', 'fitness', 'health', 'doctor', 'hospital', 'passport', 'marks', 'aadhaar', 'aadhar', 'uidai'],
+            'base_score': 0.45,
+            'must_have_boost': 0.3
         },
         'Medical Report': {
             'must_have': [
@@ -491,7 +488,7 @@ def detect_document_type(text, image_path=None, metadata=None):
         
         # Strong indicators (weighted heavily)
         strong_matches = sum(1 for keyword in config['strong'] if keyword in text_lower)
-        score += strong_matches * 0.12
+        score += strong_matches * 0.15  # Increased from 0.12 for better accuracy
         
         # Supporting indicators (lighter weight)
         support_matches = sum(1 for keyword in config['supporting'] if keyword in text_lower)
@@ -889,6 +886,12 @@ def detect_sensitive_fields(text, image_path=None, metadata=None):
 
 
 @app.route('/')
+def index():
+    """Root route - redirect to login if not authenticated, otherwise to document redaction."""
+    if 'user_id' in session:
+        return redirect(url_for('document_redaction_page'))
+    return redirect(url_for('login_page'))
+
 @app.route('/document-redaction')
 @login_required
 def document_redaction_page():

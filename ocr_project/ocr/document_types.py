@@ -1,18 +1,430 @@
 """
 Advanced document type detection and processing for OCR system.
-Supports multiple document types with specialized extraction logic.
+Supports comprehensive Indian document types with metadata integration.
 """
 
 import re
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 from datetime import datetime
 
 
 class DocumentTypeDetector:
-    """Advanced document type detection with confidence scoring."""
+    """Advanced document type detection with confidence scoring and metadata integration."""
     
     def __init__(self):
         self.document_patterns = {
+            # === GOVERNMENT IDs ===
+            'aadhaar_card': {
+                'keywords': [
+                    'AADHAAR', 'AADHAR', 'UID', 'UNIQUE IDENTIFICATION', 'UIDAI',
+                    'भारत सरकार', 'GOVERNMENT OF INDIA', 'ENROLLMENT', 'VID',
+                    'VIRTUAL ID', 'PERMANENT ACCOUNT', 'DOB', 'MALE', 'FEMALE'
+                ],
+                'patterns': [
+                    r'\d{4}\s*\d{4}\s*\d{4}',  # 12-digit Aadhaar number
+                    r'DOB\s*:?\s*\d{2}/\d{2}/\d{4}',
+                    r'ENROLLMENT\s*NO',
+                    r'VID\s*:?\s*\d{16}'
+                ],
+                'min_keywords': 1,
+                'confidence_threshold': 0.3
+            },
+            'pan_card': {
+                'keywords': [
+                    'PAN', 'PERMANENT ACCOUNT NUMBER', 'INCOME TAX DEPARTMENT',
+                    'GOVT OF INDIA', 'SIGNATURE', 'FATHER', 'NAME', 'DATE OF BIRTH'
+                ],
+                'patterns': [
+                    r'[A-Z]{5}\d{4}[A-Z]',  # PAN format: 5 letters, 4 digits, 1 letter
+                    r'PERMANENT\s+ACCOUNT\s+NUMBER',
+                    r'INCOME\s+TAX'
+                ],
+                'min_keywords': 1,
+                'confidence_threshold': 0.3
+            },
+            'passport': {
+                'keywords': [
+                    'PASSPORT', 'REPUBLIC OF INDIA', 'P<IND', 'NATIONALITY',
+                    'PASSPORT NO', 'PLACE OF BIRTH', 'PLACE OF ISSUE',
+                    'DATE OF ISSUE', 'DATE OF EXPIRY', 'SURNAME', 'GIVEN NAME'
+                ],
+                'patterns': [
+                    r'P<IND[A-Z<]+',  # MRZ line
+                    r'[A-Z]\d{7}',  # Passport number
+                    r'PASSPORT\s*NO',
+                    r'DATE\s*OF\s*ISSUE',
+                    r'DATE\s*OF\s*EXPIRY'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'voter_id': {
+                'keywords': [
+                    'ELECTION COMMISSION', 'ELECTOR', 'PHOTO IDENTITY CARD',
+                    'EPIC', 'VOTER', 'ASSEMBLY CONSTITUENCY', 'PART NO',
+                    'SERIAL NO', 'NAME', 'AGE', 'SEX', 'FATHER', 'HUSBAND'
+                ],
+                'patterns': [
+                    r'[A-Z]{3}\d{7}',  # Voter ID format
+                    r'ELECTION\s+COMMISSION',
+                    r'ELECTOR.*PHOTO',
+                    r'PART\s*NO',
+                    r'SERIAL\s*NO'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'driving_licence': {
+                'keywords': [
+                    'DRIVING LICENCE', 'DRIVING LICENSE', 'DL', 'LICENSE TO DRIVE',
+                    'TRANSPORT', 'VALID TILL', 'VALID FROM', 'DATE OF ISSUE',
+                    'BLOOD GROUP', 'COV', 'MCWG', 'LMV', 'VEHICLE CLASS'
+                ],
+                'patterns': [
+                    r'[A-Z]{2}\d{13}',  # DL number format (varies by state)
+                    r'DL\s*NO',
+                    r'VALID\s*TILL',
+                    r'VALID\s*FROM',
+                    r'COV\s*:?',
+                    r'MCWG|LMV|HMV'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'ration_card': {
+                'keywords': [
+                    'RATION CARD', 'FOOD', 'CIVIL SUPPLIES', 'CONSUMER',
+                    'CARD NUMBER', 'PRIORITY', 'AAY', 'BPL', 'APL',
+                    'HEAD OF FAMILY', 'MEMBER'
+                ],
+                'patterns': [
+                    r'RATION\s*CARD',
+                    r'FOOD.*CIVIL\s*SUPPLIES',
+                    r'CARD\s*NO',
+                    r'AAY|BPL|APL'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            
+            # === CERTIFICATES ===
+            'birth_certificate': {
+                'keywords': [
+                    'BIRTH CERTIFICATE', 'CERTIFICATE OF BIRTH', 'DATE OF BIRTH',
+                    'PLACE OF BIRTH', 'NAME OF CHILD', 'FATHER NAME', 'MOTHER NAME',
+                    'REGISTRATION NUMBER', 'REGISTRAR', 'MUNICIPAL', 'CORPORATION'
+                ],
+                'patterns': [
+                    r'BIRTH\s*CERTIFICATE',
+                    r'DATE\s*OF\s*BIRTH',
+                    r'PLACE\s*OF\s*BIRTH',
+                    r'REGISTRATION\s*NO',
+                    r'REGISTRAR'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'marriage_certificate': {
+                'keywords': [
+                    'MARRIAGE CERTIFICATE', 'CERTIFICATE OF MARRIAGE', 'SOLEMNIZED',
+                    'BRIDEGROOM', 'BRIDE', 'WITNESS', 'MARRIAGE REGISTRATION',
+                    'DATE OF MARRIAGE', 'PLACE OF MARRIAGE', 'REGISTRAR'
+                ],
+                'patterns': [
+                    r'MARRIAGE\s*CERTIFICATE',
+                    r'SOLEMNIZED',
+                    r'DATE\s*OF\s*MARRIAGE',
+                    r'BRIDEGROOM|BRIDE',
+                    r'WITNESS'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'caste_certificate': {
+                'keywords': [
+                    'CASTE CERTIFICATE', 'SCHEDULED CASTE', 'SCHEDULED TRIBE',
+                    'OTHER BACKWARD CLASS', 'OBC', 'SC', 'ST', 'COMMUNITY',
+                    'TEHSILDAR', 'REVENUE', 'DISTRICT'
+                ],
+                'patterns': [
+                    r'CASTE\s*CERTIFICATE',
+                    r'SC|ST|OBC',
+                    r'SCHEDULED\s*CASTE|SCHEDULED\s*TRIBE',
+                    r'BACKWARD\s*CLASS',
+                    r'TEHSILDAR'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'character_certificate': {
+                'keywords': [
+                    'CHARACTER CERTIFICATE', 'GOOD CHARACTER', 'CONDUCT',
+                    'BEHAVIOUR', 'PRINCIPAL', 'HEADMASTER', 'SCHOOL',
+                    'COLLEGE', 'HEREBY CERTIFY', 'MORAL CHARACTER'
+                ],
+                'patterns': [
+                    r'CHARACTER\s*CERTIFICATE',
+                    r'GOOD\s*CHARACTER',
+                    r'MORAL\s*CHARACTER',
+                    r'HEREBY\s*CERTIFY'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'migration_certificate': {
+                'keywords': [
+                    'MIGRATION CERTIFICATE', 'TRANSFER CERTIFICATE', 'TC',
+                    'MIGRATED', 'UNIVERSITY', 'COLLEGE', 'BOARD',
+                    'REGISTRATION NUMBER', 'ROLL NUMBER', 'YEAR'
+                ],
+                'patterns': [
+                    r'MIGRATION\s*CERTIFICATE',
+                    r'TRANSFER\s*CERTIFICATE',
+                    r'REGISTRATION\s*NO',
+                    r'ROLL\s*NO'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'bonafide_certificate': {
+                'keywords': [
+                    'BONAFIDE CERTIFICATE', 'BONA FIDE', 'STUDENT',
+                    'STUDYING', 'INSTITUTION', 'SCHOOL', 'COLLEGE',
+                    'PRINCIPAL', 'ACADEMIC YEAR', 'CLASS', 'HEREBY CERTIFY'
+                ],
+                'patterns': [
+                    r'BONAFIDE|BONA\s*FIDE',
+                    r'HEREBY\s*CERTIFY',
+                    r'ACADEMIC\s*YEAR',
+                    r'STUDYING'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            
+            # === UTILITY BILLS ===
+            'electricity_bill': {
+                'keywords': [
+                    'ELECTRICITY', 'ELECTRIC', 'POWER', 'CONSUMER NUMBER',
+                    'UNITS CONSUMED', 'KWH', 'BILLING PERIOD', 'DUE DATE',
+                    'CURRENT READING', 'PREVIOUS READING', 'TARIFF', 'DISCOM'
+                ],
+                'patterns': [
+                    r'ELECTRICITY|ELECTRIC',
+                    r'CONSUMER\s*NO',
+                    r'UNITS\s*CONSUMED',
+                    r'KWH|UNITS',
+                    r'BILLING\s*PERIOD',
+                    r'CURRENT\s*READING'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'water_bill': {
+                'keywords': [
+                    'WATER BILL', 'WATER SUPPLY', 'CONSUMER NUMBER',
+                    'BILLING PERIOD', 'DUE DATE', 'AMOUNT DUE',
+                    'WATER CHARGES', 'MUNICIPAL', 'CORPORATION'
+                ],
+                'patterns': [
+                    r'WATER\s*BILL',
+                    r'WATER\s*SUPPLY',
+                    r'CONSUMER\s*NO',
+                    r'BILLING\s*PERIOD',
+                    r'WATER\s*CHARGES'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'gas_bill': {
+                'keywords': [
+                    'GAS', 'LPG', 'PNG', 'CONSUMER NUMBER', 'CUSTOMER ID',
+                    'BILLING PERIOD', 'DUE DATE', 'AMOUNT DUE',
+                    'GAS CONNECTION', 'CUBIC METERS', 'SCM'
+                ],
+                'patterns': [
+                    r'GAS',
+                    r'LPG|PNG',
+                    r'CONSUMER\s*NO',
+                    r'BILLING\s*PERIOD',
+                    r'CUBIC\s*METERS|SCM'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'telephone_bill': {
+                'keywords': [
+                    'TELEPHONE', 'MOBILE', 'POSTPAID', 'BILL', 'CUSTOMER ID',
+                    'BILLING PERIOD', 'DUE DATE', 'AMOUNT DUE',
+                    'PHONE NUMBER', 'PLAN', 'AIRTEL', 'VODAFONE', 'JIO', 'BSNL'
+                ],
+                'patterns': [
+                    r'TELEPHONE|MOBILE',
+                    r'POSTPAID',
+                    r'BILLING\s*PERIOD',
+                    r'PHONE\s*NO',
+                    r'\d{10}'  # 10-digit phone number
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            
+            # === FINANCIAL DOCUMENTS ===
+            'bank_statement': {
+                'keywords': [
+                    'BANK STATEMENT', 'PASSBOOK', 'ACCOUNT STATEMENT',
+                    'ACCOUNT NUMBER', 'IFSC', 'BALANCE', 'DEPOSIT',
+                    'WITHDRAWAL', 'TRANSACTION', 'CREDIT', 'DEBIT', 'BRANCH'
+                ],
+                'patterns': [
+                    r'BANK\s*STATEMENT',
+                    r'ACCOUNT\s*NO',
+                    r'IFSC',
+                    r'BALANCE',
+                    r'TRANSACTION',
+                    r'\d{2}/\d{2}/\d{4}\s+[₹$]\s*[\d,]+\.?\d*'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'cheque': {
+                'keywords': [
+                    'CHEQUE', 'CHECK', 'PAY', 'RUPEES', 'ACCOUNT PAYEE',
+                    'BANK', 'IFSC', 'MICR', 'CHEQUE NUMBER', 'DATE'
+                ],
+                'patterns': [
+                    r'CHEQUE|CHECK',
+                    r'PAY',
+                    r'RUPEES',
+                    r'ACCOUNT\s*PAYEE',
+                    r'MICR',
+                    r'\d{6}'  # 6-digit cheque number
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'gst_certificate': {
+                'keywords': [
+                    'GST', 'GOODS AND SERVICES TAX', 'GSTIN', 'REGISTRATION',
+                    'TAX PAYER', 'TAXPAYER', 'CERTIFICATE OF REGISTRATION',
+                    'CENTRAL TAX', 'STATE TAX', 'VALID FROM'
+                ],
+                'patterns': [
+                    r'GST',
+                    r'GSTIN',
+                    r'\d{2}[A-Z]{5}\d{4}[A-Z]\d[Z][A-Z\d]',  # GSTIN format
+                    r'GOODS\s*AND\s*SERVICES\s*TAX',
+                    r'CERTIFICATE\s*OF\s*REGISTRATION'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            
+            # === EDUCATIONAL DOCUMENTS ===
+            'mark_sheet': {
+                'keywords': [
+                    'MARK SHEET', 'MARKS', 'GRADE', 'PERCENTAGE', 'EXAMINATION',
+                    'UNIVERSITY', 'BOARD', 'STUDENT', 'ROLL NUMBER',
+                    'REGISTRATION NUMBER', 'SEMESTER', 'YEAR', 'SUBJECT',
+                    'TOTAL', 'OBTAINED', 'MAXIMUM', 'CGPA', 'GPA'
+                ],
+                'patterns': [
+                    r'MARK\s*SHEET',
+                    r'EXAMINATION',
+                    r'ROLL\s*NO',
+                    r'REGISTRATION\s*NO',
+                    r'SEMESTER|YEAR',
+                    r'TOTAL\s*MARKS',
+                    r'CGPA|GPA'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'school_leaving_certificate': {
+                'keywords': [
+                    'SCHOOL LEAVING CERTIFICATE', 'LEAVING CERTIFICATE', 'SLC',
+                    'STUDENT', 'STUDYING', 'LEFT', 'SCHOOL', 'PRINCIPAL',
+                    'CLASS', 'CONDUCT', 'CHARACTER', 'DATE OF LEAVING'
+                ],
+                'patterns': [
+                    r'LEAVING\s*CERTIFICATE',
+                    r'SLC',
+                    r'DATE\s*OF\s*LEAVING',
+                    r'PRINCIPAL',
+                    r'CONDUCT'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'transfer_certificate': {
+                'keywords': [
+                    'TRANSFER CERTIFICATE', 'TC', 'STUDENT', 'TRANSFERRED',
+                    'SCHOOL', 'PRINCIPAL', 'CLASS', 'ADMISSION NUMBER',
+                    'DATE OF ADMISSION', 'DATE OF LEAVING', 'CONDUCT', 'CHARACTER'
+                ],
+                'patterns': [
+                    r'TRANSFER\s*CERTIFICATE',
+                    r'TC',
+                    r'DATE\s*OF\s*LEAVING',
+                    r'DATE\s*OF\s*ADMISSION',
+                    r'ADMISSION\s*NO'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            
+            # === OTHER DOCUMENTS ===
+            'visa': {
+                'keywords': [
+                    'VISA', 'IMMIGRATION', 'EMBASSY', 'PASSPORT NUMBER',
+                    'NATIONALITY', 'VALID FROM', 'VALID UNTIL', 'ENTRIES',
+                    'SINGLE ENTRY', 'MULTIPLE ENTRY', 'DURATION OF STAY'
+                ],
+                'patterns': [
+                    r'VISA',
+                    r'IMMIGRATION',
+                    r'EMBASSY',
+                    r'PASSPORT\s*NO',
+                    r'VALID\s*FROM',
+                    r'VALID\s*UNTIL'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'rent_agreement': {
+                'keywords': [
+                    'RENT AGREEMENT', 'RENTAL AGREEMENT', 'LEASE AGREEMENT',
+                    'LESSOR', 'LESSEE', 'TENANT', 'LANDLORD', 'RENT',
+                    'MONTHLY RENT', 'SECURITY DEPOSIT', 'PREMISES', 'WITNESSETH'
+                ],
+                'patterns': [
+                    r'RENT\s*AGREEMENT',
+                    r'RENTAL\s*AGREEMENT',
+                    r'LEASE',
+                    r'LESSOR|LESSEE',
+                    r'LANDLORD|TENANT',
+                    r'MONTHLY\s*RENT'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            'npr_details': {
+                'keywords': [
+                    'NPR', 'NATIONAL POPULATION REGISTER', 'POPULATION',
+                    'CENSUS', 'HOUSEHOLD', 'SCHEDULE', 'ENUMERATION',
+                    'RESIDENT', 'PLACE OF BIRTH', 'NATIONALITY'
+                ],
+                'patterns': [
+                    r'NPR',
+                    r'NATIONAL\s*POPULATION\s*REGISTER',
+                    r'CENSUS',
+                    r'ENUMERATION'
+                ],
+                'min_keywords': 2,
+                'confidence_threshold': 0.5
+            },
+            
+            # === EXISTING DOCUMENT TYPES (keep for backward compatibility) ===
             'invoice': {
                 'keywords': [
                     'INVOICE', 'BILL TO', 'SHIP TO', 'SUBTOTAL', 'TAX', 'TOTAL',
@@ -175,24 +587,42 @@ class DocumentTypeDetector:
             }
         }
     
-    def detect_document_type(self, text: str, min_confidence: float = 0.7) -> Tuple[str, float]:
+    def detect_document_type(
+        self, 
+        text: str, 
+        metadata: Optional[Dict[str, Any]] = None,
+        min_confidence: float = 0.7
+    ) -> Tuple[str, float]:
         """
-        Detect document type with confidence score.
+        Detect document type with confidence score using both text and metadata.
         
         Args:
             text: OCR extracted text
+            metadata: Optional metadata dictionary from metadata_extractor
             min_confidence: Minimum confidence threshold (default 0.7 for high confidence)
             
         Returns:
             Tuple of (document_type, confidence_score)
         """
+        # Convert text to uppercase for case-insensitive matching
         text_upper = text.upper()
         scores = {}
         
+        # Calculate text-based scores for all document types
         for doc_type, config in self.document_patterns.items():
-            score = self._calculate_score(text_upper, config)
-            if score >= config['confidence_threshold']:
-                scores[doc_type] = score
+            text_score = self._calculate_text_score(text_upper, config)
+            
+            # If metadata is provided, combine with metadata score
+            if metadata:
+                metadata_score = self._calculate_metadata_score(metadata, doc_type)
+                # Combined score: 60% text, 40% metadata
+                combined_score = (0.6 * text_score) + (0.4 * metadata_score)
+            else:
+                combined_score = text_score
+            
+            # Only include if it meets the document type's threshold
+            if combined_score >= config['confidence_threshold']:
+                scores[doc_type] = combined_score
         
         # Filter for high confidence results
         high_confidence_scores = {k: v for k, v in scores.items() if v >= min_confidence}
@@ -202,18 +632,23 @@ class DocumentTypeDetector:
             return best_type, high_confidence_scores[best_type]
         elif scores:
             # If no high confidence match but there are some matches, return the best one
-            # but only if it meets the document type's own threshold
             best_type = max(scores.keys(), key=lambda k: scores[k])
             return best_type, scores[best_type]
         else:
             return 'general', 0.5
     
-    def get_high_confidence_document_types(self, text: str, min_confidence: float = 0.7) -> List[Tuple[str, float]]:
+    def get_high_confidence_document_types(
+        self, 
+        text: str, 
+        metadata: Optional[Dict[str, Any]] = None,
+        min_confidence: float = 0.7
+    ) -> List[Tuple[str, float]]:
         """
         Get all document types that meet the high confidence threshold.
         
         Args:
             text: OCR extracted text
+            metadata: Optional metadata dictionary
             min_confidence: Minimum confidence threshold (default 0.7)
             
         Returns:
@@ -223,55 +658,121 @@ class DocumentTypeDetector:
         high_confidence_types = []
         
         for doc_type, config in self.document_patterns.items():
-            score = self._calculate_score(text_upper, config)
-            if score >= max(config['confidence_threshold'], min_confidence):
-                high_confidence_types.append((doc_type, score))
+            text_score = self._calculate_text_score(text_upper, config)
+            
+            if metadata:
+                metadata_score = self._calculate_metadata_score(metadata, doc_type)
+                combined_score = (0.6 * text_score) + (0.4 * metadata_score)
+            else:
+                combined_score = text_score
+            
+            if combined_score >= max(config['confidence_threshold'], min_confidence):
+                high_confidence_types.append((doc_type, combined_score))
         
         # Sort by confidence score (highest first)
         high_confidence_types.sort(key=lambda x: x[1], reverse=True)
         return high_confidence_types
     
-    def _calculate_score(self, text: str, config: Dict) -> float:
-        """Calculate confidence score for a document type."""
+    def _calculate_text_score(self, text: str, config: Dict) -> float:
+        """Calculate confidence score based on text patterns (case-insensitive)."""
         keyword_matches = sum(1 for keyword in config['keywords'] if keyword in text)
-        pattern_matches = sum(1 for pattern in config['patterns'] if re.search(pattern, text))
+        pattern_matches = sum(1 for pattern in config['patterns'] if re.search(pattern, text, re.IGNORECASE))
         
-        # More generous scoring: give more weight to keyword matches
-        # Keyword score (0-0.8) - increased from 0.7
-        keyword_score = min(keyword_matches / len(config['keywords']) * 0.8, 0.8)
+        # Keyword score (0-0.6)
+        keyword_score = min(keyword_matches / len(config['keywords']) * 0.6, 0.6)
         
-        # Pattern score (0-0.2) - decreased from 0.3
+        # Pattern score (0-0.2)
         pattern_score = min(pattern_matches / len(config['patterns']) * 0.2, 0.2) if config['patterns'] else 0
         
         total_score = keyword_score + pattern_score
         
-        # More generous minimum keyword requirement boost
+        # Boost for meeting minimum requirements
         if keyword_matches >= config['min_keywords']:
-            # Bonus for meeting minimum requirements
             total_score += 0.2
             
         # Cap at 1.0
         return min(total_score, 1.0)
+    
+    def _calculate_metadata_score(self, metadata: Dict[str, Any], doc_type: str) -> float:
+        """Calculate confidence score based on metadata hints."""
+        score = 0.0
+        
+        # Filename hints (50% weight)
+        if doc_type in metadata.get('filename_hints', []):
+            score += 0.5
+        
+        # Document hints (30% weight)
+        document_hint_map = {
+            'aadhaar_card': ['id_card_aspect_ratio', 'high_quality_scan'],
+            'pan_card': ['id_card_aspect_ratio', 'high_quality_scan'],
+            'passport': ['a4_portrait_ratio', 'high_quality_scan'],
+            'voter_id': ['id_card_aspect_ratio'],
+            'driving_licence': ['id_card_aspect_ratio'],
+            'ration_card': ['id_card_aspect_ratio'],
+            'birth_certificate': ['a4_portrait_ratio', 'scanned_document'],
+            'marriage_certificate': ['a4_portrait_ratio', 'scanned_document'],
+            'caste_certificate': ['a4_portrait_ratio', 'scanned_document'],
+            'character_certificate': ['a4_portrait_ratio', 'scanned_document'],
+            'migration_certificate': ['a4_portrait_ratio', 'scanned_document'],
+            'bonafide_certificate': ['a4_portrait_ratio', 'scanned_document'],
+            'electricity_bill': ['a4_portrait_ratio', 'scanned_document'],
+            'water_bill': ['a4_portrait_ratio', 'scanned_document'],
+            'gas_bill': ['a4_portrait_ratio', 'scanned_document'],
+            'telephone_bill': ['a4_portrait_ratio', 'scanned_document'],
+            'bank_statement': ['a4_portrait_ratio', 'scanned_document'],
+            'cheque': ['cheque_aspect_ratio'],
+            'gst_certificate': ['a4_portrait_ratio', 'scanned_document'],
+            'mark_sheet': ['a4_portrait_ratio', 'scanned_document'],
+            'school_leaving_certificate': ['a4_portrait_ratio', 'scanned_document'],
+            'transfer_certificate': ['a4_portrait_ratio', 'scanned_document'],
+            'visa': ['a4_portrait_ratio', 'scanned_document'],
+            'rent_agreement': ['a4_portrait_ratio', 'scanned_document'],
+            'certificate': ['a4_portrait_ratio', 'scanned_document']
+        }
+        
+        expected_hints = document_hint_map.get(doc_type, [])
+        if expected_hints:
+            hint_matches = sum(1 for hint in expected_hints if hint in metadata.get('document_hints', []))
+            score += 0.3 * (hint_matches / len(expected_hints))
+        
+        # Quality indicators (20% weight)
+        quality_score = 0.0
+        if 'high_resolution' in metadata.get('document_hints', []):
+            quality_score += 0.1
+        if 'high_quality_scan' in metadata.get('document_hints', []) or 'medium_quality_scan' in metadata.get('document_hints', []):
+            quality_score += 0.1
+        
+        score += quality_score
+        
+        # Cap at 1.0
+        return min(score, 1.0)
 
 
+# Keep the DocumentProcessor class for backward compatibility
 class DocumentProcessor:
     """Process different document types with specialized extraction."""
     
     def __init__(self):
         self.detector = DocumentTypeDetector()
     
-    def process_document(self, image_path: str, raw_text: str) -> Dict[str, Any]:
+    def process_document(
+        self, 
+        image_path: str, 
+        raw_text: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
         Process document based on its detected type.
         
         Args:
             image_path: Path to the image file
             raw_text: Raw OCR text
+            metadata: Optional metadata dictionary
             
         Returns:
             Dictionary with processed document data
         """
-        doc_type, confidence = self.detector.detect_document_type(raw_text)
+        doc_type, confidence = self.detector.detect_document_type(raw_text, metadata)
         
         result = {
             'document_type': doc_type,
@@ -280,280 +781,14 @@ class DocumentProcessor:
             'processed_at': datetime.now().isoformat()
         }
         
-        # Apply specialized processing based on document type
-        if doc_type == 'invoice':
-            result['structured_data'] = self._process_invoice(raw_text)
-        elif doc_type == 'receipt':
-            result['structured_data'] = self._process_receipt(raw_text)
-        elif doc_type == 'form':
-            result['structured_data'] = self._process_form(raw_text)
-        elif doc_type == 'business_card':
-            result['structured_data'] = self._process_business_card(raw_text)
-        elif doc_type == 'medical':
-            result['structured_data'] = self._process_medical(raw_text)
-        elif doc_type == 'legal':
-            result['structured_data'] = self._process_legal(raw_text)
-        elif doc_type == 'academic':
-            result['structured_data'] = self._process_academic(raw_text)
-        elif doc_type == 'financial':
-            result['structured_data'] = self._process_financial(raw_text)
-        elif doc_type == 'government':
-            result['structured_data'] = self._process_government(raw_text)
-        elif doc_type == 'mrz':
-            # MRZ processing is handled separately
-            result['structured_data'] = {'note': 'MRZ processing handled by specialized module'}
-        elif doc_type == 'certificate':
-            # Certificate processing is handled separately
-            result['structured_data'] = {'note': 'Certificate processing handled by specialized module'}
-        else:
-            result['structured_data'] = self._process_general(raw_text)
+        # Add basic structured data (you can expand this for each new document type)
+        result['structured_data'] = self._extract_basic_data(raw_text, doc_type)
         
         return result
     
-    def _process_invoice(self, text: str) -> Dict[str, Any]:
-        """Extract structured data from invoice."""
+    def _extract_basic_data(self, text: str, doc_type: str) -> Dict[str, Any]:
+        """Extract basic structured data from text."""
         data = {}
-        
-        # Invoice number
-        invoice_match = re.search(r'INVOICE\s*#?\s*([A-Z0-9-]+)', text, re.IGNORECASE)
-        if invoice_match:
-            data['invoice_number'] = invoice_match.group(1)
-        
-        # Total amount
-        total_match = re.search(r'TOTAL\s*:?\s*\$?\s*([\d,]+\.?\d*)', text, re.IGNORECASE)
-        if total_match:
-            data['total_amount'] = total_match.group(1)
-        
-        # Date
-        date_match = re.search(r'(\d{1,2}/\d{1,2}/\d{4})', text)
-        if date_match:
-            data['date'] = date_match.group(1)
-        
-        # Company/vendor (usually at the top)
-        lines = text.split('\n')
-        if lines:
-            data['vendor'] = lines[0].strip()
-        
-        return data
-    
-    def _process_receipt(self, text: str) -> Dict[str, Any]:
-        """Extract structured data from receipt."""
-        data = {}
-        
-        # Store name (usually first line)
-        lines = text.split('\n')
-        if lines:
-            data['store'] = lines[0].strip()
-        
-        # Total amount
-        total_match = re.search(r'TOTAL\s*\$?\s*(\d+\.\d{2})', text, re.IGNORECASE)
-        if total_match:
-            data['total'] = total_match.group(1)
-        
-        # Date and time
-        date_match = re.search(r'(\d{1,2}/\d{1,2}/\d{4})', text)
-        if date_match:
-            data['date'] = date_match.group(1)
-        
-        time_match = re.search(r'(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?)', text, re.IGNORECASE)
-        if time_match:
-            data['time'] = time_match.group(1)
-        
-        # Items (basic extraction)
-        items = re.findall(r'([A-Z][A-Za-z\s]+)\s+\$?(\d+\.\d{2})', text)
-        if items:
-            data['items'] = [{'name': item[0].strip(), 'price': item[1]} for item in items]
-        
-        return data
-    
-    def _process_form(self, text: str) -> Dict[str, Any]:
-        """Extract structured data from form."""
-        data = {}
-        
-        # Extract field-value pairs
-        patterns = {
-            'name': r'(?:FULL\s+)?NAME\s*:?\s*([A-Za-z\s]+)',
-            'first_name': r'FIRST\s+NAME\s*:?\s*([A-Za-z]+)',
-            'last_name': r'LAST\s+NAME\s*:?\s*([A-Za-z]+)',
-            'address': r'ADDRESS\s*:?\s*([A-Za-z0-9\s,]+)',
-            'phone': r'PHONE\s*:?\s*([\d\-\(\)\s]+)',
-            'email': r'EMAIL\s*:?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})',
-            'date': r'DATE\s*:?\s*(\d{1,2}/\d{1,2}/\d{4})'
-        }
-        
-        for field, pattern in patterns.items():
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                data[field] = match.group(1).strip()
-        
-        return data
-    
-    def _process_business_card(self, text: str) -> Dict[str, Any]:
-        """Extract structured data from business card."""
-        data = {}
-        
-        # Email
-        email_match = re.search(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', text)
-        if email_match:
-            data['email'] = email_match.group(1)
-        
-        # Phone
-        phone_match = re.search(r'(\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{4})', text)
-        if phone_match:
-            data['phone'] = phone_match.group(1)
-        
-        # Website
-        website_match = re.search(r'((?:www\.)?[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', text, re.IGNORECASE)
-        if website_match:
-            data['website'] = website_match.group(1)
-        
-        # Company (usually the largest/first line)
-        lines = [line.strip() for line in text.split('\n') if line.strip()]
-        if lines:
-            data['company'] = lines[0]
-        
-        # Title/Position
-        titles = ['CEO', 'MANAGER', 'DIRECTOR', 'PRESIDENT', 'VP', 'VICE PRESIDENT']
-        for line in lines:
-            if any(title in line.upper() for title in titles):
-                data['title'] = line
-                break
-        
-        return data
-    
-    def _process_medical(self, text: str) -> Dict[str, Any]:
-        """Extract structured data from medical document."""
-        data = {}
-        
-        # Patient name
-        patient_match = re.search(r'PATIENT\s*:?\s*([A-Za-z\s,]+)', text, re.IGNORECASE)
-        if patient_match:
-            data['patient_name'] = patient_match.group(1).strip()
-        
-        # Date of birth
-        dob_match = re.search(r'DOB\s*:?\s*(\d{1,2}/\d{1,2}/\d{4})', text, re.IGNORECASE)
-        if dob_match:
-            data['date_of_birth'] = dob_match.group(1)
-        
-        # Doctor name
-        doctor_match = re.search(r'DR\.\s*([A-Za-z\s]+)', text, re.IGNORECASE)
-        if doctor_match:
-            data['doctor'] = doctor_match.group(1).strip()
-        
-        # Date
-        date_match = re.search(r'(\d{1,2}/\d{1,2}/\d{4})', text)
-        if date_match:
-            data['date'] = date_match.group(1)
-        
-        return data
-    
-    def _process_legal(self, text: str) -> Dict[str, Any]:
-        """Extract structured data from legal document."""
-        data = {}
-        
-        # Document type
-        if 'CONTRACT' in text.upper():
-            data['document_type'] = 'Contract'
-        elif 'AGREEMENT' in text.upper():
-            data['document_type'] = 'Agreement'
-        elif 'AFFIDAVIT' in text.upper():
-            data['document_type'] = 'Affidavit'
-        
-        # Parties
-        parties = re.findall(r'PARTY\s+[A-Z]\s*:?\s*([A-Za-z\s,]+)', text, re.IGNORECASE)
-        if parties:
-            data['parties'] = [party.strip() for party in parties]
-        
-        # Date
-        date_match = re.search(r'(\d{1,2}/\d{1,2}/\d{4})', text)
-        if date_match:
-            data['date'] = date_match.group(1)
-        
-        return data
-    
-    def _process_academic(self, text: str) -> Dict[str, Any]:
-        """Extract structured data from academic document."""
-        data = {}
-        
-        # Student name
-        student_match = re.search(r'STUDENT\s*:?\s*([A-Za-z\s,]+)', text, re.IGNORECASE)
-        if student_match:
-            data['student_name'] = student_match.group(1).strip()
-        
-        # GPA
-        gpa_match = re.search(r'GPA\s*:?\s*(\d+\.\d+)', text, re.IGNORECASE)
-        if gpa_match:
-            data['gpa'] = gpa_match.group(1)
-        
-        # Degree
-        degree_match = re.search(r'(BACHELOR|MASTER|DOCTORATE)\s+OF\s+([A-Za-z\s]+)', text, re.IGNORECASE)
-        if degree_match:
-            data['degree'] = f"{degree_match.group(1)} of {degree_match.group(2)}"
-        
-        # Institution
-        lines = text.split('\n')
-        for line in lines:
-            if any(word in line.upper() for word in ['UNIVERSITY', 'COLLEGE', 'SCHOOL']):
-                data['institution'] = line.strip()
-                break
-        
-        return data
-    
-    def _process_financial(self, text: str) -> Dict[str, Any]:
-        """Extract structured data from financial document."""
-        data = {}
-        
-        # Account number
-        account_match = re.search(r'ACCOUNT\s*#?\s*:?\s*(\d+)', text, re.IGNORECASE)
-        if account_match:
-            data['account_number'] = account_match.group(1)
-        
-        # Balance
-        balance_match = re.search(r'BALANCE\s*:?\s*\$?\s*([\d,]+\.\d{2})', text, re.IGNORECASE)
-        if balance_match:
-            data['balance'] = balance_match.group(1)
-        
-        # Bank name
-        lines = text.split('\n')
-        for line in lines:
-            if 'BANK' in line.upper():
-                data['bank'] = line.strip()
-                break
-        
-        return data
-    
-    def _process_government(self, text: str) -> Dict[str, Any]:
-        """Extract structured data from government document."""
-        data = {}
-        
-        # License/Permit number
-        license_match = re.search(r'(?:LICENSE|PERMIT)\s*#?\s*:?\s*([A-Z0-9]+)', text, re.IGNORECASE)
-        if license_match:
-            data['license_number'] = license_match.group(1)
-        
-        # Expiration date
-        expires_match = re.search(r'EXPIRES?\s*:?\s*(\d{1,2}/\d{1,2}/\d{4})', text, re.IGNORECASE)
-        if expires_match:
-            data['expiration_date'] = expires_match.group(1)
-        
-        # Issuing authority
-        lines = text.split('\n')
-        for line in lines:
-            if any(word in line.upper() for word in ['DEPARTMENT', 'BUREAU', 'AGENCY']):
-                data['issuing_authority'] = line.strip()
-                break
-        
-        return data
-    
-    def _process_general(self, text: str) -> Dict[str, Any]:
-        """Process general document with basic information extraction."""
-        data = {}
-        
-        # Basic statistics
-        lines = text.split('\n')
-        data['line_count'] = len([line for line in lines if line.strip()])
-        data['word_count'] = len(text.split())
-        data['char_count'] = len(text)
         
         # Extract dates
         dates = re.findall(r'\d{1,2}/\d{1,2}/\d{4}', text)
@@ -569,5 +804,16 @@ class DocumentProcessor:
         phones = re.findall(r'(\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{4})', text)
         if phones:
             data['phones_found'] = phones
+        
+        # Extract numbers that might be IDs
+        if doc_type in ['aadhaar_card']:
+            aadhaar_match = re.search(r'\d{4}\s*\d{4}\s*\d{4}', text)
+            if aadhaar_match:
+                data['aadhaar_number'] = aadhaar_match.group(0)
+        
+        if doc_type in ['pan_card']:
+            pan_match = re.search(r'[A-Z]{5}\d{4}[A-Z]', text)
+            if pan_match:
+                data['pan_number'] = pan_match.group(0)
         
         return data
