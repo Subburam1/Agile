@@ -351,15 +351,15 @@ def detect_document_type(text, image_path=None, metadata=None):
         },
         'Marksheet': {
             'must_have': [
-                r'(?i)(marks?\s*obtained|total\s*marks)',
-                r'(?i)(grade|cgpa|sgpa|percentage)',
-                r'(?i)(semester|examination|university)'
+                r'(?i)(marks?\s*obtained|total\s*marks|statement\s*of\s*marks|mark\s*certificate)',
+                r'(?i)(grade|cgpa|sgpa|percentage|higher\s*secondary|secondary\s*course|board|examinations)',
+                r'(?i)(semester|examination|university|school|certificate\s*sl|serial\s*no)'
             ],
-            'strong': ['marks obtained', 'university', 'examination', 'marksheet', 'grade sheet', 'transcript', 'result'],
-            'supporting': ['semester', 'roll', 'theory', 'practical', 'total', 'subject', 'course'],
+            'strong': ['marks obtained', 'university', 'examination', 'marksheet', 'grade sheet', 'transcript', 'result', 'higher secondary', 'state board'],
+            'supporting': ['semester', 'roll', 'theory', 'practical', 'total', 'subject', 'course', 'certificate'],
             'negative': ['invoice', 'receipt', 'payment', 'bill'],
-            'base_score': 0.4,
-            'must_have_boost': 0.35
+            'base_score': 0.5,
+            'must_have_boost': 0.4
         },
         'College ID Card': {
             'must_have': [
@@ -532,8 +532,216 @@ def detect_document_type(text, image_path=None, metadata=None):
     }
 
 
+# ===== DOCUMENT FIELD TEMPLATES =====
+DOCUMENT_FIELD_TEMPLATES = {
+    'Aadhaar Card': {
+        'expected_fields': [
+            # Name - can appear with or without label, matches capitalized names
+            {'name': 'Name', 'pattern': r'(?i)(?:(?:name|naam)\s*:?\s*)?([A-Z][A-Z\s]{3,50}?)(?=\s*(?:\d{4}\s\d{4}\s\d{4}|DOB|YOB|Male|Female|M\b|F\b|\d{4}$))', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            
+            # Aadhaar Number - standalone pattern
+            {'name': 'Aadhaar Number', 'pattern': r'\b\d{4}\s?\d{4}\s?\d{4}\b', 'sensitive': True, 'required': True, 'category': 'identification'},
+            
+            # DOB/YOB - multiple patterns to catch different formats
+            {'name': 'Date of Birth', 'pattern': r'(?i)(?:dob|birth|जन्म|yob|year\s*of\s*birth)?\s*:?\s*(\d{1,2}[-/.\s]+\d{1,2}[-/.\s]+\d{2,4})|(?:^|\s)((?:19|20)\d{2})(?=\s|$)', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            
+            # Gender - standalone M/F or with label
+            {'name': 'Gender', 'pattern': r'(?i)(?:gender|sex|लिंग)?\s*:?\s*\b(male|female|m|f|transgender|पुरुष|महिला)\b', 'sensitive': False, 'required': True, 'category': 'personal_info'},
+            
+            # Address - multi-line address detection, very lenient
+            {'name': 'Address', 'pattern': r'(?i)(?:address|पता)?\s*:?\s*([A-Za-z0-9][A-Za-z0-9\s,./\-()]{25,250})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            
+            # Father/Guardian - optional
+            {'name': 'Father Name', 'pattern': r'(?i)(?:father\'?s?\s*name|s/o|d/o|guardian|पिता)\s*:?\s*([A-Z][A-Za-z\s]{3,50})', 'sensitive': False, 'required': False, 'category': 'personal_info'},
+            
+            # Mobile - optional
+            {'name': 'Mobile', 'pattern': r'(?i)(?:mobile|phone|mob|contact)?\s*:?\s*([6-9]\d[\s-]?\d{3}[\s-]?\d{3}[\s-]?\d{3})', 'sensitive': True, 'required': False, 'category': 'contact'},
+            
+            # Enrollment ID - 14 digit number
+            {'name': 'Enrollment ID', 'pattern': r'(?i)(?:eid|enrolment|enrollment)?\s*:?\s*(\d{14})', 'sensitive': False, 'required': False, 'category': 'identification'},
+            
+            # Visual elements
+            {'name': 'Photograph', 'is_visual': True, 'sensitive': True, 'required': True, 'category': 'biometric'},
+            {'name': 'QR Code', 'is_visual': True, 'sensitive': False, 'required': True, 'category': 'security'},
+        ]
+    },
+    'PAN Card': {
+        'expected_fields': [
+            {'name': 'Name', 'pattern': r'(?i)(name)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'PAN Number', 'pattern': r'\b[A-Z]{5}\d{4}[A-Z]\b', 'sensitive': True, 'required': True, 'category': 'identification'},
+            {'name': 'Father Name', 'pattern': r'(?i)(father\'?s?\s*name)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Date of Birth', 'pattern': r'(?i)(dob|birth|date\s*of\s*birth|date\s*of\s*incorporation)\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Photograph', 'is_visual': True, 'sensitive': True, 'required': True, 'category': 'biometric'},
+            {'name': 'Signature', 'is_visual': True, 'sensitive': True, 'required': True, 'category': 'biometric'},
+            {'name': 'QR Code', 'is_visual': True, 'sensitive': False, 'required': True, 'category': 'security'},
+        ]
+    },
+    'Passport': {
+        'expected_fields': [
+            {'name': 'Passport Number', 'pattern': r'\b[A-Z]\d{7}\b', 'sensitive': True, 'required': True, 'category': 'identification'},
+            {'name': 'Surname', 'pattern': r'(?i)(surname|last\s*name)\s*:?\s*([A-Z][A-Z\s]+)', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Given Name', 'pattern': r'(?i)(given\s*name|first\s*name)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Nationality', 'pattern': r'(?i)(nationality)\s*:?\s*(Indian|INDIAN)', 'sensitive': False, 'required': True, 'category': 'personal_info'},
+            {'name': 'Date of Birth', 'pattern': r'(?i)(dob|birth|date\s*of\s*birth)\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Place of Birth', 'pattern': r'(?i)(place\s*of\s*birth)\s*:?\s*([A-Z][a-z]+(?:,?\s+[A-Z][a-z]+){0,2})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Gender', 'pattern': r'(?i)(gender|sex)\s*:?\s*(male|female|m|f)', 'sensitive': False, 'required': True, 'category': 'personal_info'},
+            {'name': 'Place of Issue', 'pattern': r'(?i)(place\s*of\s*issue|issued\s*at)\s*:?\s*([A-Z][a-z]+)', 'sensitive': False, 'required': True, 'category': 'document_info'},
+            {'name': 'Date of Issue', 'pattern': r'(?i)(date\s*of\s*issue|issued)\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', 'sensitive': False, 'required': True, 'category': 'document_info'},
+            {'name': 'Date of Expiry', 'pattern': r'(?i)(date\s*of\s*expiry|expiry)\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', 'sensitive': False, 'required': True, 'category': 'document_info'},
+            {'name': 'Father Name', 'pattern': r'(?i)(father\'?s?\s*name)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})', 'sensitive': True, 'required': False, 'category': 'personal_info'},
+            {'name': 'Mother Name', 'pattern': r'(?i)(mother\'?s?\s*name)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})', 'sensitive': True, 'required': False, 'category': 'personal_info'},
+            {'name': 'Spouse Name', 'pattern': r'(?i)(spouse\s*name)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})', 'sensitive': True, 'required': False, 'category': 'personal_info'},
+            {'name': 'Address', 'pattern': r'(?i)(address|permanent\s*address)\s*:?\s*([^\n]{20,200})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Old Passport Number', 'pattern': r'(?i)(old\s*passport|previous\s*passport)\s*:?\s*([A-Z]\d{7})', 'sensitive': False, 'required': False, 'category': 'document_info'},
+            {'name': 'File Number', 'pattern': r'(?i)(file\s*no|file\s*number|reference)\s*:?\s*([A-Z0-9/-]+)', 'sensitive': False, 'required': False, 'category': 'document_info'},
+            {'name': 'MRZ Line', 'pattern': r'[A-Z0-9<]{30,44}', 'sensitive': True, 'required': True, 'category': 'mrz'},
+            {'name': 'Photograph', 'is_visual': True, 'sensitive': True, 'required': True, 'category': 'biometric'},
+            {'name': 'Signature', 'is_visual': True, 'sensitive': True, 'required': True, 'category': 'biometric'},
+        ]
+    },
+    'Voter ID Card': {
+        'expected_fields': [
+            {'name': 'EPIC Number', 'pattern': r'\b[A-Z]{3}\d{7}\b', 'sensitive': True, 'required': True, 'category': 'identification'},
+            {'name': 'Name', 'pattern': r'(?i)(name)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Father Name', 'pattern': r'(?i)(father\'?s?\s*name)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})', 'sensitive': False, 'required': False, 'category': 'personal_info'},
+            {'name': 'Husband Name', 'pattern': r'(?i)(husband\'?s?\s*name)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})', 'sensitive': False, 'required': False, 'category': 'personal_info'},
+            {'name': 'Gender', 'pattern': r'(?i)(gender|sex)\s*:?\s*(male|female|m|f)', 'sensitive': False, 'required': True, 'category': 'personal_info'},
+            {'name': 'Age', 'pattern': r'(?i)(age|years?)\s*:?\s*(\d{1,3})', 'sensitive': False, 'required': False, 'category': 'personal_info'},
+            {'name': 'Date of Birth', 'pattern': r'(?i)(dob|birth|date\s*of\s*birth)\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', 'sensitive': True, 'required': False, 'category': 'personal_info'},
+            {'name': 'Address', 'pattern': r'(?i)(address|house\s*no)\s*:?\s*([^\n]{15,150})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Assembly Constituency', 'pattern': r'(?i)(assembly|constituency)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})', 'sensitive': False, 'required': False, 'category': 'election_info'},
+            {'name': 'Part Number', 'pattern': r'(?i)(part\s*no|part\s*number)\s*:?\s*(\d+)', 'sensitive': False, 'required': False, 'category': 'election_info'},
+            {'name': 'Serial Number', 'pattern': r'(?i)(serial\s*no|serial\s*number|sl\s*no)\s*:?\s*(\d+)', 'sensitive': False, 'required': False, 'category': 'election_info'},
+            {'name': 'Issue Date', 'pattern': r'(?i)(issue\s*date|issued)\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', 'sensitive': False, 'required': False, 'category': 'document_info'},
+            {'name': 'Photograph', 'is_visual': True, 'sensitive': True, 'required': True, 'category': 'biometric'},
+            {'name': 'Signature', 'is_visual': True, 'sensitive': False, 'required': False, 'category': 'biometric'},
+            {'name': 'QR Code', 'is_visual': True, 'sensitive': False, 'required': False, 'category': 'security'},
+        ]
+    },
+    'Driving License': {
+        'expected_fields': [
+            {'name': 'License Number', 'pattern': r'\b[A-Z]{2}\d{13}\b', 'sensitive': True, 'required': True, 'category': 'identification'},
+            {'name': 'Name', 'pattern': r'(?i)(name)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Father Name', 'pattern': r'(?i)(father\'?s?\s*name|husband\'?s?\s*name|s/o|d/o|w/o)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})', 'sensitive': False, 'required': False, 'category': 'personal_info'},
+            {'name': 'Date of Birth', 'pattern': r'(?i)(dob|birth|date\s*of\s*birth)\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Blood Group', 'pattern': r'(?i)(blood\s*group|bg)\s*:?\s*(A\+|A-|B\+|B-|AB\+|AB-|O\+|O-)', 'sensitive': False, 'required': False, 'category': 'personal_info'},
+            {'name': 'Address', 'pattern': r'(?i)(address)\s*:?\s*([^\n]{15,150})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Issuing Authority', 'pattern': r'(?i)(rto|dto|issuing\s*authority)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})', 'sensitive': False, 'required': False, 'category': 'document_info'},
+            {'name': 'Issue Date', 'pattern': r'(?i)(issue\s*date|issued)\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', 'sensitive': False, 'required': True, 'category': 'document_info'},
+            {'name': 'Valid Until', 'pattern': r'(?i)(valid\s*until|validity|valid\s*till|expiry)\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', 'sensitive': False, 'required': True, 'category': 'document_info'},
+            {'name': 'Vehicle Class', 'pattern': r'(?i)(class\s*of\s*vehicle|cov|vehicle\s*class)\s*:?\s*(MCWG|LMV|HMV|MGV|[A-Z]+)', 'sensitive': False, 'required': False, 'category': 'license_info'},
+            {'name': 'Emergency Contact', 'pattern': r'(?i)(emergency\s*contact)\s*:?\s*([6-9]\d{9})', 'sensitive': True, 'required': False, 'category': 'contact'},
+            {'name': 'Badge Number', 'pattern': r'(?i)(badge\s*no|badge\s*number)\s*:?\s*(\d+)', 'sensitive': False, 'required': False, 'category': 'license_info'},
+            {'name': 'Photograph', 'is_visual': True, 'sensitive': True, 'required': True, 'category': 'biometric'},
+            {'name': 'Signature', 'is_visual': True, 'sensitive': True, 'required': True, 'category': 'biometric'},
+            {'name': 'QR Code', 'is_visual': True, 'sensitive': False, 'required': False, 'category': 'security'},
+        ]
+    },
+    'Community Certificate': {
+        'expected_fields': [
+            {'name': 'Name', 'pattern': r'(?i)(name|applicant\s*name)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Father Name', 'pattern': r'(?i)(father\'?s?\s*name)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})', 'sensitive': False, 'required': False, 'category': 'personal_info'},
+            {'name': 'Mother Name', 'pattern': r'(?i)(mother\'?s?\s*name)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})', 'sensitive': False, 'required': False, 'category': 'personal_info'},
+            {'name': 'Gender', 'pattern': r'(?i)(gender|sex)\s*:?\s*(male|female|m|f)', 'sensitive': False, 'required': True, 'category': 'personal_info'},
+            {'name': 'Date of Birth', 'pattern': r'(?i)(dob|birth|date\s*of\s*birth|age)\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{1,3}\s*years?)', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Address', 'pattern': r'(?i)(address|village|town|district)\s*:?\s*([^\n]{15,150})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Caste/Community', 'pattern': r'(?i)(caste|community|sub-caste)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})', 'sensitive': True, 'required': True, 'category': 'caste_info'},
+            {'name': 'Caste Category', 'pattern': r'(?i)(category)\s*:?\s*(SC|ST|OBC|MBC|EBC|EWS)', 'sensitive': True, 'required': True, 'category': 'caste_info'},
+            {'name': 'Certificate Number', 'pattern': r'(?i)(certificate\s*no|certificate\s*number|ref\s*no)\s*:?\s*([A-Z0-9/-]+)', 'sensitive': False, 'required': True, 'category': 'document_info'},
+            {'name': 'Date of Issue', 'pattern': r'(?i)(issue\s*date|issued|date)\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', 'sensitive': False, 'required': True, 'category': 'document_info'},
+            {'name': 'Valid Until', 'pattern': r'(?i)(valid\s*until|validity)\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', 'sensitive': False, 'required': False, 'category': 'document_info'},
+            {'name': 'Issuing Authority', 'pattern': r'(?i)(tahsildar|district\s*magistrate|revenue\s*officer|issuing\s*authority)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})', 'sensitive': False, 'required': True, 'category': 'document_info'},
+            {'name': 'Official Seal', 'is_visual': True, 'sensitive': False, 'required': True, 'category': 'security'},
+            {'name': 'Signature', 'is_visual': True, 'sensitive': False, 'required': True, 'category': 'security'},
+            {'name': 'QR Code', 'is_visual': True, 'sensitive': False, 'required': False, 'category': 'security'},
+        ]
+    },
+    'Birth Certificate': {
+        'expected_fields': [
+            {'name': 'Child Name', 'pattern': r'(?i)(child\'?s?\s*name|name\s*of\s*child|baby\s*name)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Date of Birth', 'pattern': r'(?i)(date\s*of\s*birth|dob|birth\s*date)\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Time of Birth', 'pattern': r'(?i)(time\s*of\s*birth|birth\s*time)\s*:?\s*(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?)', 'sensitive': False, 'required': False, 'category': 'personal_info'},
+            {'name': 'Gender', 'pattern': r'(?i)(gender|sex)\s*:?\s*(male|female|m|f|boy|girl)', 'sensitive': False, 'required': True, 'category': 'personal_info'},
+            {'name': 'Place of Birth', 'pattern': r'(?i)(place\s*of\s*birth|birth\s*place|hospital)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,4})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Father Name', 'pattern': r'(?i)(father\'?s?\s*name)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Mother Name', 'pattern': r'(?i)(mother\'?s?\s*name)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Address', 'pattern': r'(?i)(address|permanent\s*address)\s*:?\s*([^\n]{15,150})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            {'name': 'Registration Number', 'pattern': r'(?i)(registration\s*no|certificate\s*no|reg\s*no)\s*:?\s*([A-Z0-9/-]+)', 'sensitive': False, 'required': True, 'category': 'document_info'},
+            {'name': 'Date of Registration', 'pattern': r'(?i)(date\s*of\s*registration|registration\s*date)\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', 'sensitive': False, 'required': True, 'category': 'document_info'},
+            {'name': 'Registrar Name', 'pattern': r'(?i)(registrar|issuing\s*authority)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})', 'sensitive': False, 'required': False, 'category': 'document_info'},
+            {'name': 'Hospital Name', 'pattern': r'(?i)(hospital|nursing\s*home|clinic)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,4})', 'sensitive': False, 'required': False, 'category': 'document_info'},
+            {'name': 'Official Seal', 'is_visual': True, 'sensitive': False, 'required': True, 'category': 'security'},
+            {'name': 'QR Code', 'is_visual': True, 'sensitive': False, 'required': False, 'category': 'security'},
+        ]
+    },
+    'College ID Card': {
+        'expected_fields': [
+            # College name - Targeted for "M KUMARASAMY COLLEGE OF ENGINEERING" format (All Caps)
+            # Matches: Full name containing College/University/Institute
+            {'name': 'College Name', 'pattern': r'(?i)(\b[A-Z][A-Z\s&,.-]*(?:COLLEGE|UNIVERSITY|INSTITUTE)[A-Z\s&,.-]*\b)', 'sensitive': False, 'required': True, 'category': 'institution_info'},
+            
+            # Student Name - Targeted for "NAME INITIAL" format (User examples: VENKAT RAGHAV N, MUKESH M)
+            # Matches: Word(s) followed by Single Letter Initial (All Uppercase) - No lookahead dependency
+            {'name': 'Student Name', 'pattern': r'(?i)(?:name|student\s*name)?\s*:?\s*(\b[A-Z]{3,}(?:\s+[A-Z]{3,})*\s+[A-Z]\b)', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            
+            # Register Number - Targeted for 927623BAD123 format (6 digits + 3 letters + 3 digits)
+            # Relaxed: matches anywhere in text, handles sticking to other text
+            {'name': 'Register Number', 'pattern': r'(?i)(?:reg\.?\s*no\.?|register\s*no\.?|roll\s*no\.?|id\s*no\.?|regd?\.?\s*no\.?|regno)?\s*:?\s*([0-9]{6}[A-Z]{3}\d{3}|[0-9]{6}[A-Z]{3}[_]+\d+)', 'sensitive': True, 'required': True, 'category': 'identification'},
+            
+            # Batch Year - Targeted for 2023-2027 format (YYYY-YYYY)
+            # Matches: 2023-2027, 2023 - 2027 (handles standard hyphen, en-dash, em-dash)
+            {'name': 'Batch Year', 'pattern': r'(?i)(?:batch|year|academic\s*year)?\s*:?\s*(\b20\d{2}\s*[-–—]\s*20\d{2}\b)', 'sensitive': False, 'required': False, 'category': 'academic_info'},
+            
+            # Address
+            {'name': 'Address', 'pattern': r'(?i)(?:address)?\s*:?\s*([A-Za-z0-9][A-Za-z0-9\s,./\-()]{20,200})', 'sensitive': False, 'required': False, 'category': 'institution_info'},
+            
+            # Pin Code - 6 digit, label optional
+            {'name': 'Pin Code', 'pattern': r'(?i)(?:pin\s*code|pincode|postal\s*code)?\s*:?\s*(\b\d{6}\b)', 'sensitive': False, 'required': False, 'category': 'institution_info'},
+            
+            # Phone Number - landline or mobile
+            {'name': 'Phone Number', 'pattern': r'(?i)(?:phone|tel|contact|ph\.?)?\s*:?\s*(\d{3,5}[\s-]?\d{6,8}|[6-9]\d[\s-]?\d{3}[\s-]?\d{3}[\s-]?\d{3})', 'sensitive': False, 'required': False, 'category': 'contact'},
+            
+            # Website - .edu domains
+            {'name': 'Website', 'pattern': r'(?i)(?:website|web|url)?\s*:?\s*(www\.[a-z0-9.-]+\.[a-z]{2,}|[a-z0-9.-]+\.edu(?:\.in)?)', 'sensitive': False, 'required': False, 'category': 'institution_info'},
+            
+            # Visual elements
+            {'name': 'Student Photograph', 'is_visual': True, 'sensitive': True, 'required': True, 'category': 'biometric'},
+            {'name': 'Principal Signature', 'is_visual': True, 'sensitive': False, 'required': False, 'category': 'security'},
+        ]
+    },
+    'Marksheet': {
+        'expected_fields': [
+            # Candidate Name
+            {'name': 'Candidate Name', 'pattern': r'(?i)(?:name\s*of\s*the\s*candidate|candidate\s*name)\s*:?\s*([A-Z\s\.]{3,50})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            
+            # Register Number - "PERMANENT REGISTER NUMBER" in HSC marksheets
+            {'name': 'Register Number', 'pattern': r'(?i)(?:permanent\s*register\s*number|register\s*no\.?|reg\.?\s*no\.?|roll\s*no\.?)\s*:?\s*(\d{8,15})', 'sensitive': True, 'required': True, 'category': 'identification'},
+            
+            # Certificate Serial Number - "CERTIFICATE SL. NO"
+            {'name': 'Certificate Number', 'pattern': r'(?i)(?:certificate\s*sl\.?\s*no\.?|serial\s*no\.?|cert\.?\s*no\.?)\s*:?\s*([0-9]{6,15})', 'sensitive': False, 'required': True, 'category': 'document_info'},
+            
+            # Date of Birth
+            {'name': 'Date of Birth', 'pattern': r'(?i)(?:date\s*of\s*birth|dob)\s*:?\s*(\d{2}[-/]\d{2}[-/]\d{4})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            
+            # Total Marks - "TOTAL MARKS"
+            {'name': 'Total Marks', 'pattern': r'(?i)(?:total\s*marks)\s*:?\s*(\d{1,3}(?:\.\d{1,2})?|[\d\s]+)', 'sensitive': True, 'required': True, 'category': 'academic_info'},
+            
+            # School Name - "NAME OF THE SCHOOL"
+            {'name': 'School Name', 'pattern': r'(?i)(?:name\s*of\s*the\s*school|school)\s*:?\s*([A-Z][A-Z\s&,.-]{5,100})', 'sensitive': False, 'required': False, 'category': 'institution_info'},
+            
+            # Session/Year
+            {'name': 'Session', 'pattern': r'(?i)(?:session|year\s*of\s*passing|month\s*and\s*year)\s*:?\s*([A-Z]{3,}\s*\d{4})', 'sensitive': False, 'required': False, 'category': 'academic_info'},
+            
+            # Visual Elements
+            {'name': 'Candidate Photograph', 'is_visual': True, 'sensitive': True, 'required': True, 'category': 'biometric'},
+            {'name': 'QR Code', 'is_visual': True, 'sensitive': False, 'required': True, 'category': 'security'},
+            {'name': 'Official Signature', 'is_visual': True, 'sensitive': False, 'required': False, 'category': 'security'},
+        ]
+    },
+}
 
-def detect_sensitive_fields(text, image_path=None, metadata=None):
+
+def detect_sensitive_fields(text, image_path=None, metadata=None, document_type=None):
     """
     Comprehensive field detection with ACCURATE coordinates.
     Uses metadata to improve detection accuracy and OCR optimization.
@@ -580,6 +788,139 @@ def detect_sensitive_fields(text, image_path=None, metadata=None):
             ocr_data = None
             cv_image = None  # Ensure it's None if loading failed
 
+    # === DOCUMENT-TYPE-SPECIFIC DETECTION ===
+    # If document type is known and has a template, use it for field detection
+    if document_type:
+        document_type = document_type.strip()  # Normalize: remove extra whitespace
+        
+    print(f"DEBUG: Checking template for document_type='{document_type}'")
+    print(f"DEBUG: Available templates: {list(DOCUMENT_FIELD_TEMPLATES.keys())}")
+    
+    # Try exact match first
+    template_key = None
+    if document_type and document_type in DOCUMENT_FIELD_TEMPLATES:
+        template_key = document_type
+    # Try case-insensitive match
+    elif document_type:
+        for key in DOCUMENT_FIELD_TEMPLATES:
+            if key.lower() == document_type.lower():
+                template_key = key
+                break
+    
+    if template_key:
+        print(f"Using template-based detection for: {template_key}")
+        template = DOCUMENT_FIELD_TEMPLATES[template_key]
+        
+        # Get image dimensions
+        img_width, img_height = None, None
+        if image:
+            img_width, img_height = image.size
+        
+        # Helper function to find coordinates (defined inline for accessibility)
+        def find_coordinates_template(value_text, field_name):
+            if ocr_data is not None and img_width and img_height:
+                value_clean = str(value_text).strip()
+                value_tokens = [t.strip() for t in re.split(r'[\s\-:/]+', value_clean) if len(t.strip()) > 0]
+                
+                matching_boxes = []
+                used_indices = set()
+                
+                for token in value_tokens:
+                    if len(token) < 2:
+                        continue
+                    token_lower = token.lower()
+                    
+                    for idx, row in ocr_data.iterrows():
+                        if idx in used_indices:
+                            continue
+                        ocr_text_lower = str(row['text']).lower()
+                        if token_lower in ocr_text_lower or ocr_text_lower in token_lower:
+                            matching_boxes.append({
+                                'left': row['left'],
+                                'top': row['top'],
+                                'width': row['width'],
+                                'height': row['height']
+                            })
+                            used_indices.add(idx)
+                            break
+                
+                if matching_boxes:
+                    min_x = min(b['left'] for b in matching_boxes)
+                    min_y = min(b['top'] for b in matching_boxes)
+                    max_x = max(b['left'] + b['width'] for b in matching_boxes)
+                    max_y = max(b['top'] + b['height'] for b in matching_boxes)
+                    
+                    return {
+                        'x': (min_x / img_width) * 100,
+                        'y': (min_y / img_height) * 100,
+                        'width': ((max_x - min_x) / img_width) * 100,
+                        'height': ((max_y - min_y) / img_height) * 100
+                    }
+            
+            # Fallback coordinates
+            return {
+                'x': 10,
+                'y': (field_id * 6) % 90,
+                'width': 30,
+                'height': 4
+            }
+        
+        # Process each expected field from template
+        for field_spec in template['expected_fields']:
+            # Handle visual elements (QR codes, photographs, signatures)
+            if field_spec.get('is_visual'):
+                coords = {
+                    'x': 5 if field_spec['name'] == 'Photograph' else 70,
+                    'y': 5 if field_spec['name'] == 'Photograph' else 80,
+                    'width': 20 if field_spec['name'] == 'Photograph' else 25,
+                    'height': 25 if field_spec['name'] == 'Photograph' else 15
+                }
+                
+                detected_fields.append({
+                    'id': f'field_{field_id}',
+                    'field_name': field_spec['name'],
+                    'field_value': '[Visual Element - Please verify location]',
+                    'confidence': 0.7,
+                    'category': field_spec['category'],
+                    'coordinates': coords,
+                    'is_sensitive': field_spec['sensitive'],
+                    'auto_selected': field_spec['sensitive']
+                })
+                field_id += 1
+                continue
+            
+            # Text-based field detection using pattern
+            pattern = field_spec['pattern']
+            matches = re.finditer(pattern, text)
+            
+            for match in matches:
+                # Extract value from match
+                groups = match.groups()
+                if len(groups) > 1:
+                    value = groups[-1]  # Last group is typically the value
+                else:
+                    value = match.group(0)
+                
+                coords = find_coordinates_template(value, field_spec['name'])
+                
+                detected_fields.append({
+                    'id': f'field_{field_id}',
+                    'field_name': field_spec['name'],
+                    'field_value': value[:50],  # Truncate long values
+                    'confidence': 0.95 if field_spec['required'] else 0.85,
+                    'category': field_spec['category'],
+                    'coordinates': coords,
+                    'is_sensitive': field_spec['sensitive'],
+                    'auto_selected': field_spec['sensitive']
+                })
+                field_id += 1
+                break  # Only take first match for each field
+        
+        print(f"Template-based detection found {len(detected_fields)} fields")
+        return detected_fields
+    
+    # === GENERIC PATTERN-BASED DETECTION (Fallback for unknown documents) ===
+    print(f"Using generic pattern-based detection for: {document_type or 'Unknown Document'}")
     
     # Define text-based patterns
     sensitive_patterns = {
@@ -947,15 +1288,20 @@ def process_for_redaction():
             extracted_text = ""
             print(f"OCR Warning: {ocr_error}")
         
-        # Detect sensitive fields WITH ACCURATE COORDINATES and metadata optimization
-        detected_fields = detect_sensitive_fields(extracted_text, image_path=temp_path, metadata=metadata) if extracted_text else []
-        
-        # Detect document type using metadata
+        # Detect document type FIRST using metadata
         document_info = detect_document_type(extracted_text, image_path=temp_path, metadata=metadata) if extracted_text else {
             'document_type': 'Unknown Document',
             'confidence': 0.0,
             'all_scores': {}
         }
+        
+        # Then detect sensitive fields using document-type-specific templates
+        detected_fields = detect_sensitive_fields(
+            extracted_text, 
+            image_path=temp_path, 
+            metadata=metadata,
+            document_type=document_info['document_type']  # Pass document type for template-based detection
+        ) if extracted_text else []
         
         # Convert to base64
         buffered = io.BytesIO()
