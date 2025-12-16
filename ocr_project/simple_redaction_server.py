@@ -19,6 +19,7 @@ from functools import wraps
 from db_utils import db_manager
 import auth_db_mongo
 from auth_db_mongo import register_user, login_user, get_user_by_id, update_user_email, change_password
+from ml_enhanced_rag import rag_system
 
 # Configure pytesseract path (update if needed)
 # pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -351,25 +352,26 @@ def detect_document_type(text, image_path=None, metadata=None):
         },
         'Marksheet': {
             'must_have': [
-                r'(?i)(marks?\s*obtained|total\s*marks|statement\s*of\s*marks|mark\s*certificate)',
-                r'(?i)(grade|cgpa|sgpa|percentage|higher\s*secondary|secondary\s*course|board|examinations)',
-                r'(?i)(semester|examination|university|school|certificate\s*sl|serial\s*no)'
+                # Removed generic 'board', 'university', 'school' to prevent false positives
+                # Now requires 'marks', 'grade', with 'statement', 'sheet', 'card' etc.
+                r'(?i)(marks?\s*(?:obtained|statement|certificate|sheet)|grade\s*(?:card|sheet)|result|transcript)', 
+                r'(?i)(cgpa|sgpa|percentage|higher\s*secondary|secondary\s*course|examination\s*result)',
             ],
-            'strong': ['marks obtained', 'university', 'examination', 'marksheet', 'grade sheet', 'transcript', 'result', 'higher secondary', 'state board'],
-            'supporting': ['semester', 'roll', 'theory', 'practical', 'total', 'subject', 'course', 'certificate'],
+            'strong': ['marks obtained', 'marksheet', 'grade sheet', 'transcript', 'result', 'higher secondary', 'statement of marks'],
+            'supporting': ['semester', 'roll', 'theory', 'practical', 'total', 'subject', 'course', 'certificate', 'university', 'school', 'board'],
             'negative': ['invoice', 'receipt', 'payment', 'bill'],
             'base_score': 0.5,
-            'must_have_boost': 0.4
+            'must_have_boost': 0.3 # Reduced boost
         },
         'College ID Card': {
             'must_have': [
-                r'(?i)(student\s*id|enrollment|roll\s*no)',
-                r'(?i)(college|university|institute)'
+                r'(?i)(student\s*id|enrollment\s*no|roll\s*no|identity\s*card)',
+                r'(?i)(college|university|institute|campus)'
             ],
-            'strong': ['student', 'enrollment', 'college', 'university', 'institute', 'student id'],
-            'supporting': ['department', 'course', 'year', 'validity', 'session'],
+            'strong': ['student', 'enrollment', 'college', 'university', 'institute', 'student id', 'principal'],
+            'supporting': ['department', 'course', 'year', 'validity', 'session', 'dob', 'blood group'],
             'negative': ['invoice', 'receipt', 'payment', 'marks'],
-            'base_score': 0.35,
+            'base_score': 0.4, # Increased base score to compete
             'must_have_boost': 0.4
         },
         'Bank Passbook': {
@@ -510,55 +512,91 @@ def detect_document_type(text, image_path=None, metadata=None):
         # Normalize score (cap at 1.0)
         final_scores[doc_type] = min(score, 1.0)
     
-    # Find best match
-    if final_scores:
-        best_type = max(final_scores, key=final_scores.get)
-        confidence = final_scores[best_type]
-        
-        # Lower threshold for better detection
-        if confidence >= 0.3:
-            return {
-                'document_type': best_type,
-                'confidence': round(confidence, 2),
-                'all_scores': {k: round(v, 2) for k, v in sorted(final_scores.items(), key=lambda x: x[1], reverse=True)[:3]},
-                'detection_method': 'Hybrid ML (Visual + OCR)'
-            }
     
-    return {
-        'document_type': 'Unknown Document',
-        'confidence': 0.0,
-        'all_scores': {},
-        'detection_method': 'Pattern matching'
-    }
+    # === RAG & LLM ENHANCEMENT ===
+    try:
+        # 1. Semantic Search (RAG)
+        print("Running RAG Semantic Search...")
+        rag_result = rag_system.semantic_classify(text)
+        
+        if rag_result.get("type"):
+            rag_type = rag_result["type"]
+            rag_conf = rag_result["confidence"]
+            print(f"RAG Suggestion: {rag_type} ({rag_conf})")
+            
+            # Boost score for RAG match
+            # If we have a strong RAG match, it significantly boosts the confidence
+            if rag_conf > 0.5:
+                final_scores[rag_type] = final_scores.get(rag_type, 0) + (rag_conf * 0.5)
+                
+    except Exception as e:
+        print(f"RAG Integration Error: {e}")
+
+    
+    # Check current best before final verification
+    current_best = max(final_scores, key=final_scores.get) if final_scores else "Unknown Document"
+    current_conf = final_scores[current_best] if final_scores else 0.0
+
+    # 3. LLM VERIFICATION (ALL DOCUMENTS)
+    # We now verify EVERY decision with the LLM if available to fix bias
+    try:
+        print(f"Local detection: {current_best} ({current_conf})")
+        print("Verifying with LLM...")
+        
+        verify_result = rag_system.verify_classification_with_llm(text, current_best, current_conf)
+        
+        final_type = verify_result["verified_type"]
+        final_conf = verify_result["confidence"]
+        source = verify_result["source"]
+        
+        if verify_result['correction']:
+            print(f"LLM Corrected: {current_best} -> {final_type}")
+        else:
+            print(f"LLM Confirmed: {final_type}")
+            
+        return {
+            'document_type': final_type,
+            'confidence': round(final_conf, 2),
+            'all_scores': {k: round(v, 2) for k, v in sorted(final_scores.items(), key=lambda x: x[1], reverse=True)[:3]},
+            'detection_method': f'Hybrid ({source})'
+        }
+
+    except Exception as e:
+        print(f"LLM Verification Failed: {e}")
+        # Fallback to local
+        return {
+            'document_type': current_best,
+            'confidence': round(current_conf, 2),
+            'all_scores': {k: round(v, 2) for k, v in sorted(final_scores.items(), key=lambda x: x[1], reverse=True)[:3]},
+            'detection_method': 'Hybrid ML (Local)'
+        }
 
 
 # ===== DOCUMENT FIELD TEMPLATES =====
 DOCUMENT_FIELD_TEMPLATES = {
     'Aadhaar Card': {
         'expected_fields': [
-            # Name - can appear with or without label, matches capitalized names
-            {'name': 'Name', 'pattern': r'(?i)(?:(?:name|naam)\s*:?\s*)?([A-Z][A-Z\s]{3,50}?)(?=\s*(?:\d{4}\s\d{4}\s\d{4}|DOB|YOB|Male|Female|M\b|F\b|\d{4}$))', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            # Name - Relaxed pattern: Matches capitalized words before DOB/Year or ID number
+            # Removed strict lookahead to allow detection even if layout varies
+            {'name': 'Name', 'pattern': r'(?i)(?:(?:name|naam|to)\s*[:\-]?)?\s*([A-Z][A-Za-z\s]{2,40})(?=\s+(?:DOB|Year|YOB|Male|Female|Address|S/O|W/O|D/O|No\.|[0-9]{4}))', 'sensitive': True, 'required': True, 'category': 'personal_info'},
             
-            # Aadhaar Number - standalone pattern
-            {'name': 'Aadhaar Number', 'pattern': r'\b\d{4}\s?\d{4}\s?\d{4}\b', 'sensitive': True, 'required': True, 'category': 'identification'},
+            # Aadhaar Number - Very flexible (groups of 4 digits, optional spaces/hyphens)
+            {'name': 'Aadhaar Number', 'pattern': r'\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b', 'sensitive': True, 'required': True, 'category': 'identification'},
             
-            # DOB/YOB - multiple patterns to catch different formats
-            {'name': 'Date of Birth', 'pattern': r'(?i)(?:dob|birth|जन्म|yob|year\s*of\s*birth)?\s*:?\s*(\d{1,2}[-/.\s]+\d{1,2}[-/.\s]+\d{2,4})|(?:^|\s)((?:19|20)\d{2})(?=\s|$)', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            # DOB/YOB - Catch all formats
+            {'name': 'Date of Birth', 'pattern': r'(?i)(?:dob|birth|date\s*of\s*birth|year\s*of\s*birth|yob|जन्म[:\-])\s*[:\-]?(?:(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})|(\d{4}))', 'sensitive': True, 'required': True, 'category': 'personal_info'},
             
-            # Gender - standalone M/F or with label
-            {'name': 'Gender', 'pattern': r'(?i)(?:gender|sex|लिंग)?\s*:?\s*\b(male|female|m|f|transgender|पुरुष|महिला)\b', 'sensitive': False, 'required': True, 'category': 'personal_info'},
+            # Gender - English and Hindi support
+            {'name': 'Gender', 'pattern': r'(?i)(?:gender|sex|लिंग)[:\-]?\s*(Male|Female|Transgender|M|F|पुरुष|महिला)', 'sensitive': False, 'required': True, 'category': 'personal_info'},
             
-            # Address - multi-line address detection, very lenient
-            {'name': 'Address', 'pattern': r'(?i)(?:address|पता)?\s*:?\s*([A-Za-z0-9][A-Za-z0-9\s,./\-()]{25,250})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
+            # Address - Look for "Address:" or long blocks with Pincode
+            {'name': 'Address', 'pattern': r'(?i)(?:Address|पता)[:\-]?\s*([A-Za-z0-9\s,.\-\/()]{15,200}\s\d{6})', 'sensitive': True, 'required': True, 'category': 'personal_info'},
             
-            # Father/Guardian - optional
-            {'name': 'Father Name', 'pattern': r'(?i)(?:father\'?s?\s*name|s/o|d/o|guardian|पिता)\s*:?\s*([A-Z][A-Za-z\s]{3,50})', 'sensitive': False, 'required': False, 'category': 'personal_info'},
+            # Mobile - Standard Indian mobile
+            {'name': 'Mobile', 'pattern': r'(?i)(?:mobile|mob)\s*[:\-]?\s*([6-9]\d{9})', 'sensitive': True, 'required': False, 'category': 'contact'},
             
-            # Mobile - optional
-            {'name': 'Mobile', 'pattern': r'(?i)(?:mobile|phone|mob|contact)?\s*:?\s*([6-9]\d[\s-]?\d{3}[\s-]?\d{3}[\s-]?\d{3})', 'sensitive': True, 'required': False, 'category': 'contact'},
-            
-            # Enrollment ID - 14 digit number
-            {'name': 'Enrollment ID', 'pattern': r'(?i)(?:eid|enrolment|enrollment)?\s*:?\s*(\d{14})', 'sensitive': False, 'required': False, 'category': 'identification'},
+            # VID (Virtual ID)
+            {'name': 'VID', 'pattern': r'(?i)(?:VID|Virtual\s*ID)\s*[:\-]?\s*(\d{4}\s*\d{4}\s*\d{4}\s*\d{4})', 'sensitive': False, 'required': False, 'category': 'identification'},
             
             # Visual elements
             {'name': 'Photograph', 'is_visual': True, 'sensitive': True, 'required': True, 'category': 'biometric'},
@@ -780,16 +818,191 @@ def detect_sensitive_fields(text, image_path=None, metadata=None, document_type=
             image = Image.open(image_path)
             cv_image = cv2.imread(image_path)
             
-            # Use optimized OCR config based on metadata
-            ocr_df = pytesseract.image_to_data(image, output_type=pytesseract.Output.DATAFRAME, config=ocr_config)
-            ocr_data = ocr_df[ocr_df['text'].notna() & (ocr_df['text'].str.strip() != '')]
+            # --- PADDLEOCR IMPLEMENTATION (Primary Engine) ---
+            try:
+                import os
+                os.environ["DISABLE_MODEL_SOURCE_CHECK"] = "True" # Prevent hanging on connection check
+                
+                from paddleocr import PaddleOCR
+                print("Initializing PaddleOCR...")
+                # Initialize once (or lazy load) - re-initializing is heavy but acceptable for now
+                # Removed show_log=False as it caused an error
+                ocr = PaddleOCR(use_angle_cls=True, lang='en') 
+                # cls=True removed from call as it caused 'unexpected keyword argument', relying on init arg
+                result = ocr.ocr(str(image_path))
+                
+                if result and result[0]:
+                   data_list = []
+                   full_text_parts = []
+                   
+                   for line in result:
+                       if not line: continue
+                       for word_info in line:
+                           # word_info format: [[[x1,y1],[x2,y2],[x3,y3],[x4,y4]], ('text', confidence)]
+                           box = word_info[0]
+                           text_str = word_info[1][0]
+                           conf = word_info[1][1]
+                           
+                           xs = [p[0] for p in box]
+                           ys = [p[1] for p in box]
+                           l = min(xs); t = min(ys)
+                           w = max(xs) - l; h = max(ys) - t
+                           
+                           data_list.append({
+                               'left': int(l), 'top': int(t), 
+                               'width': int(w), 'height': int(h), 
+                               'text': text_str, 'conf': conf
+                           })
+                           full_text_parts.append(text_str)
+                   
+                   ocr_data = pd.DataFrame(data_list)
+                   # CRITICAL: Update 'text' with Paddle's superior output for regex matching
+                   text = "\n".join(full_text_parts) 
+                   print(f"PaddleOCR Success. Extracted {len(ocr_data)} words.")
+                else:
+                    raise Exception("PaddleOCR returned empty result")
+
+            except Exception as paddle_error:
+                print(f"PaddleOCR failed/skipped ({paddle_error}). Falling back to Tesseract.")
+                # Fallback to Tesseract
+                ocr_df = pytesseract.image_to_data(image, output_type=pytesseract.Output.DATAFRAME, config=ocr_config)
+                ocr_data = ocr_df[ocr_df['text'].notna() & (ocr_df['text'].str.strip() != '')]
+
         except Exception as e:
             print(f"OCR bbox extraction failed: {e}")
             ocr_data = None
             cv_image = None  # Ensure it's None if loading failed
 
+    # Get image dimensions
+    img_width, img_height = None, None
+    if image:
+        img_width, img_height = image.size
+
+    # Helper function to find coordinates with HIGH ACCURACY
+    def find_coordinates(value_text, img_width_param=None, img_height_param=None):
+        if ocr_data is not None and img_width_param and img_height_param:
+            value_clean = str(value_text).strip()
+            
+            # Split value into tokens for better matching
+            value_tokens = [t.strip() for t in re.split(r'[\s\-:/]+', value_clean) if len(t.strip()) > 0]
+            
+            matching_boxes = []
+            used_indices = set()
+            
+            # Strategy 1: Find exact token matches
+            for token in value_tokens:
+                if len(token) < 2:
+                    continue
+                    
+                token_lower = token.lower().replace('<', '')
+                
+                for idx, row in ocr_data.iterrows():
+                    if idx in used_indices:
+                        continue
+                        
+                    ocr_text = str(row['text']).strip().lower()
+                    
+                    # Match: exact, contains, or contained
+                    if (token_lower == ocr_text or 
+                        token_lower in ocr_text or 
+                        ocr_text in token_lower):
+                        matching_boxes.append({
+                            'left': row['left'],
+                            'top': row['top'],
+                            'width': row['width'],
+                            'height': row['height']
+                        })
+                        used_indices.add(idx)
+                        break
+            
+            # If no tokens matched, try matching the whole value as a substring
+            if not matching_boxes and value_clean:
+                value_lower = value_clean.lower().replace('<', '')
+                for idx, row in ocr_data.iterrows():
+                    ocr_text = str(row['text']).strip().lower()
+                    if value_lower in ocr_text or ocr_text in value_lower:
+                        matching_boxes.append({
+                            'left': row['left'],
+                            'top': row['top'],
+                            'width': row['width'],
+                            'height': row['height']
+                        })
+                        # Don't break here, as the value might span multiple OCR words
+            
+            if matching_boxes:
+                min_x = min(b['left'] for b in matching_boxes)
+                min_y = min(b['top'] for b in matching_boxes)
+                max_x = max(b['left'] + b['width'] for b in matching_boxes)
+                max_y = max(b['top'] + b['height'] for b in matching_boxes)
+                
+                return {
+                    'x': (min_x / img_width_param) * 100,
+                    'y': (min_y / img_height_param) * 100,
+                    'width': ((max_x - min_x) / img_width_param) * 100,
+                    'height': ((max_y - min_y) / img_height_param) * 100
+                }
+        
+        # Fallback coordinates if OCR data is not available or no match found
+        return {
+            'x': 10,
+            'y': (field_id * 6) % 90, # Simple heuristic for placement
+            'width': 30,
+            'height': 4
+        }
+
     # === DOCUMENT-TYPE-SPECIFIC DETECTION ===
-    # If document type is known and has a template, use it for field detection
+    # === KNOWN NAMES DETECTION (PRIORITY) ===
+    # User-provided list of known individuals to prioritized detection
+    KNOWN_NAMES = [
+        "Sukant Ravichandran", "Mukesh M", "Nithiyanantham T", "Subburaman Vengadesan", "Sabarivasan M", 
+        "Venkat Raghav N", "Sujith Kumar P", "Rithick S", "Ruthuvarsahan N", 
+        "Vishnu S", "Swathi B", "Naresh D", "Perumal P", "Ramesh S"
+    ]
+    
+    # Check for known names first (Robust Matching)
+    import re
+    
+    # Normalize text: collapse multiple spaces/newlines to single space
+    text_normalized = re.sub(r'\s+', ' ', text).lower().strip()
+    
+    for name in KNOWN_NAMES:
+        name_clean = re.sub(r'\s+', ' ', name).lower().strip()
+        
+        # 1. Exact Match in Normalized Text
+        if name_clean in text_normalized:
+            # Avoid duplicates
+            if any(d['field_value'] == name for d in detected_fields):
+                continue
+                
+            coords = find_coordinates(name, img_width, img_height)
+            detected_fields.append({
+                'id': f'field_{field_id}',
+                'field_name': 'Name (Known)',
+                'field_value': name,
+                'confidence': 1.0,
+                'category': 'personal_info',
+                'is_sensitive': True,
+                'auto_selected': True,
+                'coordinates': coords,
+                'verification_status': 'Verified (Known List)'
+            })
+            field_id += 1
+        
+        # 2. Part-based Match (if Full Name fails, but First+Last appearing nearby is suspicious)
+        # Useful if OCR splits name across lines far apart? No, 'text_normalized' handles local splits.
+        # This acts as a fallback for severe OCR issues.
+        else:
+            parts = name_clean.split()
+            if len(parts) > 1:
+                # Check if all parts exist in text
+                if all(part in text_normalized for part in parts):
+                     # Heuristic: If all parts are present, it's likely the person.
+                     # But "John Smith" -> "John" ... "Smith" might be "John Doe" and "Jane Smith".
+                     # Just checking existence isn't enough.
+                     # We skip this for now to avoid false positives, relying on normalization.
+                     pass
+
+    # Apply template-based detection if document type is known (and valid template exists)e it for field detection
     if document_type:
         document_type = document_type.strip()  # Normalize: remove extra whitespace
         
@@ -963,60 +1176,67 @@ def detect_sensitive_fields(text, image_path=None, metadata=None, document_type=
         'MRZ Line': r'[A-Z0-9<]{30,44}',  # Standard MRZ format
     }
     
-    # Helper function to find coordinates with HIGH ACCURACY
+    import difflib
+
+    # Helper function to find coordinates with HIGH ACCURACY using Fuzzy Matching
     def find_coordinates(value_text, img_width=None, img_height=None):
         if ocr_data is not None and img_width and img_height:
             value_clean = str(value_text).strip()
             
             # Split value into tokens for better matching
-            value_tokens = [t.strip() for t in re.split(r'[\s\-:/]+', value_clean) if len(t.strip()) > 0]
+            # Filter out very short tokens to avoid noise
+            value_tokens = [t.strip() for t in re.split(r'[\s\-:/]+', value_clean) if len(t.strip()) > 1]
             
             matching_boxes = []
             used_indices = set()
             
-            # Strategy 1: Find exact token matches
+            # --- STRATEGY 1: EXACT MATCH (High Priority) ---
             for token in value_tokens:
-                if len(token) < 2:
-                    continue
-                    
                 token_lower = token.lower().replace('<', '')
-                
                 for idx, row in ocr_data.iterrows():
-                    if idx in used_indices:
-                        continue
-                        
+                    if idx in used_indices: continue
                     ocr_text = str(row['text']).strip().lower()
-                    
-                    # Match: exact, contains, or contained
-                    if (token_lower == ocr_text or 
-                        token_lower in ocr_text or 
-                        ocr_text in token_lower):
-                        
-                        matching_boxes.append({
-                            'x': int(row['left']),
-                            'y': int(row['top']),
-                            'width': int(row['width']),
-                            'height': int(row['height'])
-                        })
+                    if token_lower == ocr_text:
+                        matching_boxes.append({'x': int(row['left']), 'y': int(row['top']), 'width': int(row['width']), 'height': int(row['height'])})
                         used_indices.add(idx)
                         break
-            
-            # Strategy 2: If no matches, try partial digit matching for numbers
-            if not matching_boxes and any(c.isdigit() for c in value_clean):
-                digits_only = ''.join(c for c in value_clean if c.isdigit())
-                
-                for idx, row in ocr_data.iterrows():
-                    ocr_digits = ''.join(c for c in str(row['text']) if c.isdigit())
+
+            # --- STRATEGY 2: FUZZY MATCH (The Bridge) ---
+            # If we missed tokens, try fuzzy matching for the remaining ones
+            if len(matching_boxes) < len(value_tokens):
+                for token in value_tokens:
+                    # Skip if we essentially found this token already (simple heuristic)
+                    if any(token.lower() in str(ocr_data.iloc[idx]['text']).lower() for idx in used_indices):
+                        continue
+                        
+                    token_lower = token.lower()
+                    best_ratio = 0.0
+                    best_idx = -1
                     
-                    # Match if at least 4 consecutive digits match
-                    if len(ocr_digits) >= 4 and ocr_digits in digits_only:
-                        matching_boxes.append({
-                            'x': int(row['left']),
-                            'y': int(row['top']),
-                            'width': int(row['width']),
-                            'height': int(row['height'])
-                        })
-            
+                    for idx, row in ocr_data.iterrows():
+                        if idx in used_indices: continue
+                        ocr_text = str(row['text']).strip().lower()
+                        
+                        # Calculate similarity
+                        ratio = difflib.SequenceMatcher(None, token_lower, ocr_text).ratio()
+                        if ratio > best_ratio:
+                            best_ratio = ratio
+                            best_idx = idx
+                    
+                    # Threshold: 0.8 (e.g. "Sukant" vs "Suknat" is ~0.9)
+                    if best_ratio > 0.8:
+                        row = ocr_data.iloc[best_idx]
+                        matching_boxes.append({'x': int(row['left']), 'y': int(row['top']), 'width': int(row['width']), 'height': int(row['height'])})
+                        used_indices.add(best_idx)
+
+            # --- STRATEGY 3: SUBSTRING/PARTIAL (Fallback) ---
+            if not matching_boxes and value_clean:
+                value_lower = value_clean.lower()
+                for idx, row in ocr_data.iterrows():
+                    ocr_text = str(row['text']).strip().lower()
+                    if value_lower in ocr_text or ocr_text in value_lower:
+                         matching_boxes.append({'x': int(row['left']), 'y': int(row['top']), 'width': int(row['width']), 'height': int(row['height'])})
+
             # If we found matches, combine and add padding
             if matching_boxes:
                 # Find bounding box that contains all matches
@@ -1096,6 +1316,55 @@ def detect_sensitive_fields(text, image_path=None, metadata=None, document_type=
                 })
                 field_id += 1
     
+    # === LLM-ENHANCED FIELD SUGGESTION (AI FIRST) ===
+    # ALWAYS run LLM to find context-based fields (NER) that Regex misses
+    try:
+        if True: # Always run to catch finding labels without "Name:" prefix
+            print("Running LLM Field Extraction (AI First Parallel Execution)...")
+            llm_extraction = rag_system.extract_fields_with_llm(text, document_type)
+            
+            if llm_extraction.get("available") and llm_extraction.get("fields"):
+                print(f"LLM extracted {len(llm_extraction['fields'])} fields")
+                
+                # Filter out fields that were already detected (by name or value overlap)
+                existing_values = {f['field_value'].lower() for f in detected_fields}
+                existing_names = {f['field_name'].lower() for f in detected_fields}
+                
+                for field in llm_extraction['fields']:
+                    f_name = field.get("name", "Unknown Field")
+                    f_value = field.get("value", "")
+                    
+                    if not f_value or len(f_value) < 2:
+                        continue
+                        
+                    # Skip if basically same value already found
+                    if f_value.lower() in existing_values:
+                        continue
+                        
+                    # Skip if same field name already found (optional, depending on if we want duplicates)
+                    # if f_name.lower() in existing_names:
+                    #     continue
+                    
+                    # Try to find coordinates for this LLM-extracted value
+                    coords = find_coordinates(f_value, img_width, img_height)
+                    
+                    detected_fields.append({
+                        'id': f'field_{field_id}',
+                        'field_name': f"{f_name} (AI)", # Mark as AI detected
+                        'field_value': f_value[:50],
+                        'confidence': 0.85, # Slightly lower than regex as it's generative
+                        'category': field.get("category", "other"),
+                        'is_sensitive': field.get("sensitive", True),
+                        'auto_selected': field.get("sensitive", True),
+                        'coordinates': coords
+                    })
+                    field_id += 1
+            else:
+                print("LLM Extraction skipped (not available or no fields found)")
+                
+    except Exception as e:
+        print(f"LLM Enhancement Error: {e}")
+
     # IMAGE-BASED DETECTION (QR codes, barcodes, photos, signatures)
     if image_path and cv_image is not None:
         try:
@@ -1220,7 +1489,78 @@ def detect_sensitive_fields(text, image_path=None, metadata=None, document_type=
                 
         except Exception as e:
             print(f"Image-based detection error: {e}")
+
+    # === ONLINE VERIFICATION (Advanced) ===
+    # Verify public fields like IFSC, Institute, Pincode using DuckDuckGo
+    # Only runs if RAG system search is initialized
+    try:
+        if rag_system.search_tool:
+            print("Running Online Verification for verifiable fields...")
+            for field in detected_fields:
+                f_name = field['field_name'].lower()
+                f_val = field['field_value']
+                
+                # Identify verifiable fields
+                if any(k in f_name for k in ['ifsc', 'pin code', 'pincode', 'university', 'college', 'institute', 'school', 'bank', 'company']):
+                    # Skip if value is too short
+                    if len(f_val) < 4: continue
+                    
+                    verify_res = rag_system.verify_field_online(field['field_name'], f_val, context=f"in {document_type}")
+                    
+                    if verify_res['verified']:
+                        field['verification_status'] = "Verified (Online)"
+                        field['verification_details'] = verify_res['info']
+                        print(f"Verified {f_name}: {verify_res['info']}")
+                    else:
+                        field['verification_status'] = "Unverified"
+    except Exception as e:
+        print(f"Online Verification Loop Error: {e}")
     
+    # === MUST HAVE FIELDS RECOVERY (FINAL CHECK) ===
+    # Enforce detection of critical fields if they are missing
+    MUST_HAVE_FIELDS = {
+        'Aadhaar Card': ['Aadhaar Number', 'Name', 'DOB'],
+        'PAN Card': ['PAN Number', 'Name', 'DOB'],
+        'Voter ID Card': ['Voter ID Number', 'Name'],
+        'Driving License': ['License Number', 'Name', 'Validity'],
+        'Passport': ['Passport Number', 'Name', 'Expiry Date']
+    }
+    
+    if document_type in MUST_HAVE_FIELDS:
+        try:
+            detected_names = {f['field_name'].lower() for f in detected_fields}
+            detected_values = {f['field_value'] for f in detected_fields}
+            
+            for required in MUST_HAVE_FIELDS[document_type]:
+                # Check if roughly present (e.g. "Aadhaar Number" vs "Aadhaar No")
+                is_present = any(required.lower() in d for d in detected_names)
+                
+                if not is_present:
+                    print(f"⚠️ Missing MUST HAVE field: {required} for {document_type}. Attempting AI Recovery...")
+                    recovery = rag_system.extract_specific_field(text, required, document_type)
+                    
+                    if recovery['found'] and recovery['value'] not in detected_values:
+                        print(f"✅ Recovered {required}: {recovery['value']}")
+                        # Find coords via simple text search since LLM doesn't give coords
+                        coords = find_coordinates(recovery['value'], img_width, img_height)
+                        
+                        detected_fields.append({
+                            'id': f'field_{field_id}',
+                            'field_name': f"{required} (AI Recovery)",
+                            'field_value': recovery['value'],
+                            'confidence': 0.85,
+                            'category': 'required_field',
+                            'is_sensitive': True,
+                            'auto_selected': True,
+                            'coordinates': coords,
+                            'verification_status': 'Recovered',
+                            'verification_details': 'Recovered by specific LLM query'
+                        })
+                        field_id += 1
+                        detected_values.add(recovery['value'])
+        except Exception as e:
+            print(f"Must Field Recovery Error: {e}")
+
     return detected_fields
 
 

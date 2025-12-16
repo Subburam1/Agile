@@ -259,3 +259,7 @@ def update_user_email(user_id, new_email):
 def change_password(user_id, current_password, new_password):
     """Wrapper function to change password."""
     return mongo_auth_manager.change_password(user_id, current_password, new_password)
+
+def get_mongo_client():
+    """Wrapper to get the raw MongoDB client."""
+    return mongo_auth_manager.client
